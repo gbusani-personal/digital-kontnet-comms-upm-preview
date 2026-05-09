@@ -24,3 +24,181 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.cms-rich-text {
+  color: #1f2937;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.cms-rich-text > *:first-child {
+  margin-top: 0;
+}
+
+.cms-rich-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.cms-rich-text p,
+.cms-rich-text ul,
+.cms-rich-text ol,
+.cms-rich-text blockquote,
+.cms-rich-text pre,
+.cms-rich-text table {
+  margin: 0.75rem 0;
+}
+
+/* Use explicit sibling spacing so paragraph rhythm stays visible regardless of margin-collapsing behavior. */
+.cms-rich-text p {
+  margin: 0 !important;
+}
+
+.cms-rich-text p + p,
+.cms-rich-text p + ul,
+.cms-rich-text p + ol,
+.cms-rich-text ul + p,
+.cms-rich-text ol + p,
+.cms-rich-text blockquote + p,
+.cms-rich-text p + blockquote,
+.cms-rich-text p + h1,
+.cms-rich-text p + h2,
+.cms-rich-text p + h3,
+.cms-rich-text p + h4,
+.cms-rich-text p + h5,
+.cms-rich-text p + h6,
+.cms-rich-text h1 + p,
+.cms-rich-text h2 + p,
+.cms-rich-text h3 + p,
+.cms-rich-text h4 + p,
+.cms-rich-text h5 + p,
+.cms-rich-text h6 + p {
+  margin-top: 1rem !important;
+}
+
+.cms-rich-text h1,
+.cms-rich-text h2,
+.cms-rich-text h3,
+.cms-rich-text h4,
+.cms-rich-text h5,
+.cms-rich-text h6 {
+  margin: 1rem 0 0.5rem;
+  line-height: 1.25;
+  color: #111827;
+}
+
+.cms-rich-text h1 { font-size: 1.75rem; }
+.cms-rich-text h2 { font-size: 1.5rem; }
+.cms-rich-text h3 { font-size: 1.3rem; }
+.cms-rich-text h4 { font-size: 1.15rem; }
+.cms-rich-text h5 { font-size: 1rem; }
+.cms-rich-text h6 { font-size: 0.92rem; }
+
+.cms-rich-text ul,
+.cms-rich-text ol {
+  margin-left: 7mm;
+  padding-left: 7mm;
+}
+
+.cms-rich-text ul {
+  list-style: disc outside !important;
+}
+
+.cms-rich-text ol {
+  list-style: decimal outside !important;
+}
+
+.cms-rich-text ul ul {
+  list-style-type: circle !important;
+}
+
+.cms-rich-text ul ul ul {
+  list-style-type: square !important;
+}
+
+.cms-rich-text li {
+  display: list-item !important;
+}
+
+.cms-rich-text li + li {
+  margin-top: 0.3rem;
+}
+
+.cms-rich-text a {
+  color: #0b5fff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cms-rich-text strong {
+  font-weight: 700;
+}
+
+.cms-rich-text em {
+  font-style: italic;
+}
+
+.cms-rich-text blockquote {
+  margin-left: 0;
+  padding: 0.65rem 0.9rem;
+  border-left: 3px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.cms-rich-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9em;
+  background: #eef2f7;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+.cms-rich-text pre {
+  overflow-x: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 0.8rem;
+}
+
+.cms-rich-text pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.cms-rich-text table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cms-rich-text th,
+.cms-rich-text td {
+  border: 1px solid #d1d5db;
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cms-rich-text th {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.cms-rich-text img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: transparent !important;
+}
+
+.cms-rich-text figure,
+.cms-rich-text picture,
+.cms-rich-text object,
+.cms-rich-text embed,
+.cms-rich-text iframe {
+  background: transparent !important;
+}
+
+.cms-rich-text figure {
+  margin: 1rem 0;
+}
