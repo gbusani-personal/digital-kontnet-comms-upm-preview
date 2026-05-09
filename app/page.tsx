@@ -45,6 +45,37 @@ function normalizeHexColor(value?: string): string | null {
   return validHexPattern.test(prefixed) ? prefixed : null;
 }
 
+function expandHexColor(hexColor: string): string {
+  const normalized = hexColor.startsWith("#") ? hexColor : `#${hexColor}`;
+
+  if (normalized.length === 4) {
+    const [r, g, b] = normalized.slice(1).split("");
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+
+  return normalized;
+}
+
+function getContrastTextColor(backgroundHex: string): "#111111" | "#ffffff" {
+  const expanded = expandHexColor(backgroundHex);
+  const r = parseInt(expanded.slice(1, 3), 16) / 255;
+  const g = parseInt(expanded.slice(3, 5), 16) / 255;
+  const b = parseInt(expanded.slice(5, 7), 16) / 255;
+
+  const linearize = (channel: number): number => {
+    if (channel <= 0.03928) {
+      return channel / 12.92;
+    }
+
+    return ((channel + 0.055) / 1.055) ** 2.4;
+  };
+
+  const luminance =
+    0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+
+  return luminance > 0.5 ? "#111111" : "#ffffff";
+}
+
 function formatDateValue(value: string): string {
   const trimmed = value.trim();
   const dateMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
@@ -608,7 +639,10 @@ export default function Home() {
   const cmsLetterLogoSrc = cmsBrandPartner?.logoUrl || fallbackLogoSrc;
   const cmsLetterLogoAlt = cmsBrandPartner?.partnerName || "Brand Partner Logo";
   const cmsBrandColor = normalizeHexColor(cmsBrandPartner?.primaryColorHex) || "#e5e7eb";
-  const cmsLetterLayerBackground = `${cmsBrandColor}1A`;
+  const cmsLetterLayerBackground = cmsBrandColor;
+  const cmsFrameTextColor = getContrastTextColor(cmsBrandColor);
+  const cmsFrameMutedTextColor = cmsFrameTextColor === "#ffffff" ? "#f3f4f6" : "#374151";
+  const cmsFrameErrorColor = cmsFrameTextColor === "#ffffff" ? "#fecaca" : "#b00020";
 
   return (
     <main
@@ -635,6 +669,7 @@ export default function Home() {
             border: "1px solid #d6d6d6",
             borderRadius: "8px",
             backgroundColor: cmsLetterLayerBackground,
+            color: cmsFrameTextColor,
             padding: "1rem",
           }}
         >
@@ -643,25 +678,34 @@ export default function Home() {
           </h2>
 
           {!currentLetterCode && (
-            <p style={{ margin: 0, color: "#666" }}>
+            <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>
               Load XML and select a record to render its letter content from Kontent.ai.
             </p>
           )}
 
           {currentLetterCode && (
-            <p style={{ marginTop: 0, marginBottom: "0.75rem", color: "#333", fontSize: "0.9rem" }}>
+            <p
+              style={{
+                marginTop: 0,
+                marginBottom: "0.75rem",
+                color: cmsFrameMutedTextColor,
+                fontSize: "0.9rem",
+              }}
+            >
               Letter Code: <strong>{currentLetterCode}</strong>
             </p>
           )}
 
-          {cmsLoading && <p style={{ margin: 0, color: "#555" }}>Loading CMS content...</p>}
+          {cmsLoading && (
+            <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>Loading CMS content...</p>
+          )}
 
           {cmsErrorMessage && (
-            <p style={{ margin: 0, color: "#b00020" }}>Error: {cmsErrorMessage}</p>
+            <p style={{ margin: 0, color: cmsFrameErrorColor }}>Error: {cmsErrorMessage}</p>
           )}
 
           {!cmsLoading && cmsNotConfigured && currentLetterCode && (
-            <p style={{ marginTop: "0.75rem", color: "#555" }}>
+            <p style={{ marginTop: "0.75rem", color: cmsFrameMutedTextColor }}>
               No template is configured in Kontent.ai for letter code
               {" "}
               <strong>{currentLetterCode}</strong>.

@@ -362,7 +362,11 @@ function resolveBrandPartner(
         codename: readTextValue(item.system?.codename),
         partnerName: partnerDisplayName,
         logoUrl: readAssetUrl(elements.logo),
-        primaryColorHex: readStringElementValue(elements.primary_colour_hex_value),
+        primaryColorHex: 
+          readStringElementValue(elements.primary_colour_hex_value) ||
+          readStringElementValue(elements.primary_color_hex_value) ||
+          readStringElementValue(elements.primary_color) ||
+          readStringElementValue(elements.primary_colour_hex),
         disclaimer: disclaimerText,
       };
     }
@@ -416,7 +420,11 @@ function resolveBrandPartner(
       readStringElementValue(elements.data_macros___brand_partner__partnername) ||
       readTextValue(partialMatch.system?.name),
     logoUrl: readAssetUrl(elements.logo),
-    primaryColorHex: readStringElementValue(elements.primary_colour_hex_value),
+    primaryColorHex: 
+      readStringElementValue(elements.primary_colour_hex_value) ||
+      readStringElementValue(elements.primary_color_hex_value) ||
+      readStringElementValue(elements.primary_color) ||
+      readStringElementValue(elements.primary_colour_hex),
     disclaimer: disclaimerText,
   };
 }
