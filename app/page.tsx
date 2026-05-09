@@ -250,7 +250,6 @@ function readFirstStringFromValue(value: unknown): string {
 export default function Home() {
   const fallbackLogoSrc = "/next.svg";
 
-  const [xmlUrl, setXmlUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [records, setRecords] = useState<XmlObject[]>([]);
@@ -356,20 +355,12 @@ export default function Home() {
     return Array.from(xmlDoc.documentElement.children);
   };
 
-  // Load XML from URL, parse it with DOMParser, then store repeating nodes as records.
-  const handleLoadXml = async () => {
-    const trimmedUrl = xmlUrl.trim();
+  // Load XML from local file, parse it with DOMParser, then store repeating nodes as records.
+  const handleLocalFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
 
-    if (!trimmedUrl) {
-      setErrorMessage("Please enter an XML URL.");
-      setRecords([]);
-      return;
-    }
-
-    if (trimmedUrl.endsWith("/")) {
-      setErrorMessage(
-        "Please provide the full XML blob URL including the file name, not just the container path."
-      );
+    if (!file) {
+      setErrorMessage(null);
       setRecords([]);
       return;
     }
@@ -381,16 +372,7 @@ export default function Home() {
     setLetterCodeFilter("");
 
     try {
-      // Fetch through a same-origin API route so browser CORS rules do not block Azure requests.
-      const response = await fetch(
-        `/api/load-xml?url=${encodeURIComponent(trimmedUrl)}`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Unable to load XML. Status: ${response.status}.`);
-      }
-
-      const xmlText = await response.text();
+      const xmlText = await file.text();
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, "application/xml");
 
@@ -440,11 +422,9 @@ export default function Home() {
       setRecords(parsedRecords);
     } catch (error) {
       const message =
-        error instanceof TypeError
-          ? "Failed to load XML through the API proxy. Confirm the URL is reachable and points to a valid XML blob."
-          : error instanceof Error
-            ? error.message
-            : "An unexpected error occurred while loading XML.";
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred while loading XML.";
       setErrorMessage(message);
     } finally {
       setIsLoading(false);
@@ -777,13 +757,13 @@ export default function Home() {
                 gap: "0.75rem",
               }}
             >
-              <label htmlFor="xml-url">File path</label>
+              <label htmlFor="xml-file">File path</label>
               <input
-                id="xml-url"
-                type="text"
-                value={xmlUrl}
-                onChange={(event) => setXmlUrl(event.target.value)}
-                placeholder="https://pspds.blob.core.windows.net/medibankassets/BP111PROD2_PrintBatch_20260320_101009.xml"
+                id="xml-file"
+                type="file"
+                accept=".xml"
+                onChange={handleLocalFileSelect}
+                disabled={isLoading}
                 style={{
                   padding: "0.5rem",
                   border: "1px solid #b9b9b9",
@@ -793,24 +773,8 @@ export default function Home() {
               />
 
               <small style={{ color: "#555" }}>
-                Verify or upload it first using Azure Storage Explorer.
+                Select an XML file from your computer to preview the letter content.
               </small>
-
-              <button
-                type="button"
-                onClick={handleLoadXml}
-                disabled={isLoading}
-                style={{
-                  padding: "0.65rem 1rem",
-                  border: "none",
-                  borderRadius: "6px",
-                  backgroundColor: isLoading ? "#888" : "#1f4ab8",
-                  color: "#fff",
-                  cursor: isLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                {isLoading ? "Loading..." : "Load XML"}
-              </button>
 
               {errorMessage && (
                 <p style={{ margin: 0, color: "#b00020" }}>Error: {errorMessage}</p>
