@@ -51,6 +51,12 @@ type LetterCodeRule = {
 };
 
 const LETTER_CODE_RULES: Record<string, LetterCodeRule> = {
+  // ENDORSEMENT uses XML <Auto-Renewal> to select a linked template codename.
+  ENDORSEMENT: {
+    selectorQueryParam: "autoRenewal",
+    requireSelectorValue: true,
+    disableDefaultTemplateFallback: true,
+  },
   // Extend this object as you add mappings for additional Letter_Code_ values.
 };
 
@@ -70,6 +76,26 @@ function normalizeCode(value: string): string {
 function normalizeCodeKey(value: string): string {
   // Normalize for resilient comparisons between XML codes and codenames.
   return normalizeCode(value).replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeAlphabeticKey(value: string): string {
+  // Relaxed matcher for selector values where CMS codename may swap '-' and '_'
+  // or contain other separators; keep only letters for matching.
+  return normalizeCode(value).replace(/[^A-Z]/g, "");
+}
+
+function matchesSelectorValueToCodename(selectorValue: string, codename: string): boolean {
+  const strictSelectorKey = normalizeCodeKey(selectorValue);
+  const strictCodenameKey = normalizeCodeKey(codename);
+
+  if (strictSelectorKey && strictSelectorKey === strictCodenameKey) {
+    return true;
+  }
+
+  const alphaSelectorKey = normalizeAlphabeticKey(selectorValue);
+  const alphaCodenameKey = normalizeAlphabeticKey(codename);
+
+  return Boolean(alphaSelectorKey && alphaSelectorKey === alphaCodenameKey);
 }
 
 function readCodeFromElement(element?: KontentElement): string {
@@ -510,12 +536,12 @@ function resolveTemplateBySelector(
     return null;
   }
 
-  const normalizedSelectorKey = normalizeCodeKey(selectorValue);
-
   const mappedCodename = valueToTemplateCodename[normalizeCode(selectorValue)];
-  const linkedCodeKeys = linkedTemplateCodenames.map((value) => normalizeCodeKey(value));
+  const hasMappedCodenameLinked = linkedTemplateCodenames.some((linkedCodename) =>
+    matchesSelectorValueToCodename(mappedCodename || "", linkedCodename)
+  );
 
-  if (mappedCodename && !linkedCodeKeys.includes(normalizeCodeKey(mappedCodename))) {
+  if (mappedCodename && !hasMappedCodenameLinked) {
     return null;
   }
 
@@ -528,7 +554,7 @@ function resolveTemplateBySelector(
   }
 
   for (const codename of linkedTemplateCodenames) {
-    if (normalizeCodeKey(codename) !== normalizedSelectorKey) {
+    if (!matchesSelectorValueToCodename(selectorValue, codename)) {
       continue;
     }
 
@@ -563,7 +589,7 @@ function resolveClWaiverTemplate(
     }
 
     const codename = readTextValue(item.system?.codename);
-    if (codename && normalizeCodeKey(codename) === normalizeCodeKey(normalizedOutcome)) {
+    if (codename && matchesSelectorValueToCodename(normalizedOutcome, codename)) {
       resolved = item;
       break;
     }
@@ -574,8 +600,10 @@ function resolveClWaiverTemplate(
       items.find(
         (item) =>
           item.system?.type === "letter_template" &&
-          normalizeCodeKey(readTextValue(item.system?.codename)) ===
-            normalizeCodeKey(normalizedOutcome)
+          matchesSelectorValueToCodename(
+            normalizedOutcome,
+            readTextValue(item.system?.codename)
+          )
       ) || null;
   }
 

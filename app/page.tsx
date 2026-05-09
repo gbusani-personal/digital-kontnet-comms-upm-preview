@@ -548,6 +548,10 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "Underwriter")
     : "";
 
+  const autoRenewal = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "Auto-Renewal")
+    : "";
+
   const resolvedCmsHtml = useMemo(() => {
     if (!cmsHtml || !filteredRecord) {
       return cmsHtml;
@@ -594,6 +598,10 @@ export default function Home() {
           queryParams.set("underwriter", underwriter);
         }
 
+        if (autoRenewal) {
+          queryParams.set("autoRenewal", autoRenewal);
+        }
+
         const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
 
         const payload = (await response.json()) as {
@@ -634,7 +642,7 @@ export default function Home() {
     };
 
     void loadCmsContent();
-  }, [currentLetterCode, waiverOutcome, partnerName, underwriter]);
+  }, [currentLetterCode, waiverOutcome, partnerName, underwriter, autoRenewal]);
 
   const cmsLetterLogoSrc = cmsBrandPartner?.logoUrl || fallbackLogoSrc;
   const cmsLetterLogoAlt = cmsBrandPartner?.partnerName || "Brand Partner Logo";
