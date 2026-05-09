@@ -513,6 +513,34 @@ export default function Home() {
     const record = obj as Record<string, unknown>;
     const targetKey = normalizeFieldKey(key);
 
+    // Support XML where the logical field name is in an attribute, e.g.
+    // <Field name="CancellationReason">PETDIED</Field>.
+    const attributeNameValue =
+      readFirstStringFromValue(record.name) ||
+      readFirstStringFromValue(record.Name);
+
+    if (attributeNameValue && normalizeFieldKey(attributeNameValue) === targetKey) {
+      const preferredValue =
+        readFirstStringFromValue(record.value) ||
+        readFirstStringFromValue(record.Value);
+
+      if (preferredValue) {
+        return preferredValue;
+      }
+
+      for (const [recordKey, recordValue] of Object.entries(record)) {
+        const normalizedRecordKey = normalizeFieldKey(recordKey);
+        if (normalizedRecordKey === "name" || normalizedRecordKey === "value") {
+          continue;
+        }
+
+        const candidate = readFirstStringFromValue(recordValue);
+        if (candidate) {
+          return candidate;
+        }
+      }
+    }
+
     const exactValue = record[key];
     const exactString = readFirstStringFromValue(exactValue);
     if (exactString) {
@@ -550,6 +578,19 @@ export default function Home() {
 
   const autoRenewal = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "Auto-Renewal")
+    : "";
+
+  const cancellationReason = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "CancellationReason")
+    : "";
+
+  const cancelWithCoolingPeriod = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "CancelWithCoolingPeriod") ||
+      findFirstStringValueByKey(filteredRecord, "CancelWithinCoolingPeriod")
+    : "";
+
+  const cxPremiumDueDate = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "CXPremiumDueDate")
     : "";
 
   const resolvedCmsHtml = useMemo(() => {
@@ -602,6 +643,18 @@ export default function Home() {
           queryParams.set("autoRenewal", autoRenewal);
         }
 
+        if (cancellationReason) {
+          queryParams.set("cancellationReason", cancellationReason);
+        }
+
+        if (cancelWithCoolingPeriod) {
+          queryParams.set("cancelWithCoolingPeriod", cancelWithCoolingPeriod);
+        }
+
+        if (cxPremiumDueDate) {
+          queryParams.set("cxPremiumDueDate", cxPremiumDueDate);
+        }
+
         const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
 
         const payload = (await response.json()) as {
@@ -642,7 +695,16 @@ export default function Home() {
     };
 
     void loadCmsContent();
-  }, [currentLetterCode, waiverOutcome, partnerName, underwriter, autoRenewal]);
+  }, [
+    currentLetterCode,
+    waiverOutcome,
+    partnerName,
+    underwriter,
+    autoRenewal,
+    cancellationReason,
+    cancelWithCoolingPeriod,
+    cxPremiumDueDate,
+  ]);
 
   const cmsLetterLogoSrc = cmsBrandPartner?.logoUrl || fallbackLogoSrc;
   const cmsLetterLogoAlt = cmsBrandPartner?.partnerName || "Brand Partner Logo";

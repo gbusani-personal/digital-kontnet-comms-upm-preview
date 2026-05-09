@@ -33,6 +33,14 @@ type ClWaiverConfig = {
   selectorQueryParam: string;
 };
 
+type CancelConfig = {
+  letterCode: string;
+  cancellationReasonParam: string;
+  cancelWithCoolingPeriodParam: string;
+  cancelWithinCoolingPeriodParam: string;
+  cxPremiumDueDateParam: string;
+};
+
 type LetterCodeRule = {
   selectorQueryParam?: string;
   // When true, do not use rule hints to jump to another letter_type.
@@ -63,6 +71,14 @@ const LETTER_CODE_RULES: Record<string, LetterCodeRule> = {
 const CL_WAIVER_CONFIG: ClWaiverConfig = {
   letterCode: "CLWAIVER",
   selectorQueryParam: "waiverOutcome",
+};
+
+const CANCEL_CONFIG: CancelConfig = {
+  letterCode: "CANCEL",
+  cancellationReasonParam: "cancellationReason",
+  cancelWithCoolingPeriodParam: "cancelWithCoolingPeriod",
+  cancelWithinCoolingPeriodParam: "cancelWithinCoolingPeriod",
+  cxPremiumDueDateParam: "cxPremiumDueDate",
 };
 
 function readTextValue(value: unknown): string {
@@ -235,7 +251,78 @@ function findLetterTypeByRule(items: KontentItem[], rule: LetterCodeRule): Konte
   return null;
 }
 
-function extractContent(item: KontentItem): { title: string; html: string; raw: unknown } {
+function readItemByCodename(
+  codename: string,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>
+): KontentItem | null {
+  const fromModular = modularContent[codename];
+  if (fromModular) {
+    return fromModular;
+  }
+
+  return allItems.find((item) => readTextValue(item.system?.codename) === codename) || null;
+}
+
+function extractFirstHtmlFromItem(item: KontentItem): string {
+  const elements = item.elements ?? {};
+
+  for (const element of Object.values(elements)) {
+    if (element.type === "rich_text" && typeof element.value === "string") {
+      return element.value;
+    }
+  }
+
+  for (const element of Object.values(elements)) {
+    if (typeof element.value === "string" && element.value.trim()) {
+      return `<p>${element.value}</p>`;
+    }
+  }
+
+  return "";
+}
+
+function resolveReusableBlocks(
+  html: string,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  visitedCodenames: Set<string>
+): string {
+  if (!html.trim()) {
+    return html;
+  }
+
+  return html.replace(/<object\b[^>]*><\/object>/gi, (objectTag) => {
+    const codenameMatch = objectTag.match(/data-codename\s*=\s*["']([^"']+)["']/i);
+    const codename = codenameMatch?.[1]?.trim() || "";
+
+    if (!codename) {
+      return "";
+    }
+
+    const normalizedCodename = normalizeCodeKey(codename);
+    if (visitedCodenames.has(normalizedCodename)) {
+      return "";
+    }
+
+    const linkedItem = readItemByCodename(codename, allItems, modularContent);
+    if (!linkedItem) {
+      return "";
+    }
+
+    const nextVisited = new Set(visitedCodenames);
+    nextVisited.add(normalizedCodename);
+
+    const linkedHtml = extractFirstHtmlFromItem(linkedItem);
+    return resolveReusableBlocks(linkedHtml, allItems, modularContent, nextVisited);
+  });
+}
+
+function extractContent(
+  item: KontentItem,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>
+): { title: string; html: string; raw: unknown } {
   const elements = item.elements ?? {};
 
   const title =
@@ -244,23 +331,13 @@ function extractContent(item: KontentItem): { title: string; html: string; raw: 
     readTextValue(item.system?.name) ||
     "Letter Content";
 
-  let html = "";
-
-  for (const element of Object.values(elements)) {
-    if (element.type === "rich_text" && typeof element.value === "string") {
-      html = element.value;
-      break;
-    }
+  const initialHtml = extractFirstHtmlFromItem(item);
+  const visitedCodenames = new Set<string>();
+  const itemCodename = readTextValue(item.system?.codename);
+  if (itemCodename) {
+    visitedCodenames.add(normalizeCodeKey(itemCodename));
   }
-
-  if (!html) {
-    for (const element of Object.values(elements)) {
-      if (typeof element.value === "string" && element.value.trim()) {
-        html = `<p>${element.value}</p>`;
-        break;
-      }
-    }
-  }
+  const html = resolveReusableBlocks(initialHtml, allItems, modularContent, visitedCodenames);
 
   return {
     title,
@@ -620,6 +697,123 @@ function resolveClWaiverTemplate(
   return { template: resolved };
 }
 
+function isNullLikeValue(value: string): boolean {
+  const normalized = normalizeCodeKey(value);
+  return !normalized || normalized === "NULL" || normalized === "NONE" || normalized === "NA";
+}
+
+function isYesValue(value: string): boolean {
+  const normalized = normalizeCodeKey(value);
+  return normalized === "YES" || normalized === "Y" || normalized === "TRUE" || normalized === "1";
+}
+
+function readTemplateByCodename(
+  codename: string,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>
+): KontentItem | null {
+  const fromModular = modularContent[codename];
+  if (fromModular) {
+    return fromModular;
+  }
+
+  return allItems.find((item) => item.system?.codename === codename) || null;
+}
+
+function resolveCancelTemplate(
+  letterTypeItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  cancellationReason: string,
+  cancelWithCoolingPeriod: string,
+  cxPremiumDueDate: string
+): { template: KontentItem | null; expectedTemplateCode?: string; error?: string; status?: number } {
+  if (!cancellationReason.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'cancellationReason' for letter code CANCEL.",
+      status: 400,
+    };
+  }
+
+  const reason = normalizeAlphabeticKey(cancellationReason);
+  let expectedTemplateCode = "";
+
+  if (reason === "PETDIED" || reason === "PETMISSING" || reason === "OTHER") {
+    const reasonPrefixMap: Record<string, string> = {
+      PETDIED: "PET_DIED",
+      PETMISSING: "PET_MISSING",
+      OTHER: "OTHER",
+    };
+
+    const prefix = reasonPrefixMap[reason];
+
+    if (isYesValue(cancelWithCoolingPeriod)) {
+      expectedTemplateCode = `${prefix}_COOLING_OFF_PERIOD`;
+    } else if (isNullLikeValue(cxPremiumDueDate)) {
+      expectedTemplateCode = `${prefix}_NO_PREMIUM_DUE`;
+    } else {
+      expectedTemplateCode = `${prefix}_PREMIUM_DUE`;
+    }
+  } else {
+    const directReasonMap: Record<string, string> = {
+      NONPAYMENT: "NON_PAYMENTS",
+      POLICYINISSUED: "POLICY_IN_ISSUED",
+      RENEWALLAPSED: "RENEWAL_LAPSED",
+      RENEWALCANCELLEDANNUAL: "RENEWAL_CANCELLED_ANNUAL",
+      RENEWALCANCELLEDINSTALMENT: "RENEWAL_CANCELLED_INSTALMENT",
+    };
+
+    expectedTemplateCode = directReasonMap[reason] || "";
+  }
+
+  if (!expectedTemplateCode) {
+    return {
+      template: null,
+      error: `No CANCEL template mapping found for CancellationReason '${cancellationReason}'.`,
+      status: 404,
+    };
+  }
+
+  const linkedTemplateCodenames = letterTypeItem
+    ? readLinkedCodenames(letterTypeItem.elements?.letter_templates)
+    : [];
+
+  for (const codename of linkedTemplateCodenames) {
+    if (!matchesSelectorValueToCodename(expectedTemplateCode, codename)) {
+      continue;
+    }
+
+    const template = readTemplateByCodename(codename, allItems, modularContent);
+    if (template) {
+      return { template, expectedTemplateCode };
+    }
+  }
+
+  const allTemplateItems = [
+    ...Object.values(modularContent).filter((item) => item.system?.type === "letter_template"),
+    ...allItems.filter((item) => item.system?.type === "letter_template"),
+  ];
+
+  const fallbackTemplate = allTemplateItems.find((item) => {
+    const codename = readTextValue(item.system?.codename);
+    return codename.length > 0 && matchesSelectorValueToCodename(expectedTemplateCode, codename);
+  });
+
+  if (fallbackTemplate) {
+    return { template: fallbackTemplate, expectedTemplateCode };
+  }
+
+  return {
+    template: null,
+    expectedTemplateCode,
+    error:
+      `No CANCEL letter_template matched '${expectedTemplateCode}'. ` +
+      "Expected a letter_template codename matching the configured CANCEL logic.",
+    status: 404,
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const letterCode = searchParams.get("letterCode");
@@ -709,7 +903,47 @@ export async function GET(request: Request) {
         );
       }
 
-      const content = extractContent(clWaiverResult.template);
+      const content = extractContent(clWaiverResult.template, items, modularContent);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === CANCEL_CONFIG.letterCode) {
+      const cancellationReason =
+        searchParams.get(CANCEL_CONFIG.cancellationReasonParam) || "";
+      const cancelWithCoolingPeriod =
+        searchParams.get(CANCEL_CONFIG.cancelWithCoolingPeriodParam) ||
+        searchParams.get(CANCEL_CONFIG.cancelWithinCoolingPeriodParam) ||
+        "";
+      const cxPremiumDueDate =
+        searchParams.get(CANCEL_CONFIG.cxPremiumDueDateParam) || "";
+
+      const cancelLetterType = findMatchingLetterTypeItem(items, letterCode);
+
+      const cancelResult = resolveCancelTemplate(
+        cancelLetterType,
+        items,
+        modularContent,
+        cancellationReason,
+        cancelWithCoolingPeriod,
+        cxPremiumDueDate
+      );
+
+      if (!cancelResult.template) {
+        return NextResponse.json(
+          {
+            error: cancelResult.error || "Unable to resolve CANCEL template.",
+          },
+          { status: cancelResult.status || 404 }
+        );
+      }
+
+      const content = extractContent(cancelResult.template, items, modularContent);
       return NextResponse.json(
         {
           ...content,
@@ -782,7 +1016,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const content = extractContent(resolvedTemplate);
+    const content = extractContent(resolvedTemplate, items, modularContent);
 
     return NextResponse.json(
       {
