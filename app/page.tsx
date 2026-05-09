@@ -918,9 +918,9 @@ export default function Home() {
                 <Image
                   src={cmsLetterLogoSrc}
                   alt={cmsLetterLogoAlt}
-                  width={260}
-                  height={55}
-                  style={{ width: "min(100%, 260px)", height: "auto", objectFit: "contain" }}
+                  width={210}
+                  height={45}
+                  style={{ width: "min(100%, 210px)", height: "auto", objectFit: "contain" }}
                 />
               </div>
 
