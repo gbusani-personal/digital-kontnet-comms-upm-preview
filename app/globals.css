@@ -202,3 +202,10 @@ body {
 .cms-rich-text figure {
   margin: 1rem 0;
 }
+
+.cms-rich-text .cms-placeholder-highlight {
+  background: #fef08a;
+  border-radius: 3px;
+  padding: 0.02rem 0.15rem;
+  /* Preserve CMS text styling: bold, italic, colors, etc. */
+}

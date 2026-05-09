@@ -12,6 +12,7 @@ type XmlObject = {
 const RAW_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}/g;
 const ENCODED_PLACEHOLDER_PATTERN = /&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;/g;
 const URL_ENCODED_PLACEHOLDER_PATTERN = /%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
+const ANY_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;|%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
 
 const PLACEHOLDER_ALIASES: Record<string, string[]> = {
   fullpolicyno: ["fullpolicynumber", "policyno", "policynumber"],
@@ -200,7 +201,12 @@ function resolvePlaceholderValue(token: string, lookup: Map<string, string>): st
   return null;
 }
 
-function replaceCmsPlaceholders(templateHtml: string, record: unknown): string {
+function replaceCmsPlaceholders(
+  templateHtml: string,
+  record: unknown,
+  showResolvedValues: boolean,
+  highlightPlaceholders: boolean
+): string {
   if (!templateHtml.trim()) {
     return templateHtml;
   }
@@ -224,21 +230,94 @@ function replaceCmsPlaceholders(templateHtml: string, record: unknown): string {
       .replace(URL_ENCODED_PLACEHOLDER_PATTERN, replaceToken);
   };
 
-  const replacedHtml = replacePlaceholderTokens(templateHtml);
-
-  if (typeof DOMParser === "undefined") {
-    return replacedHtml;
+  if (typeof DOMParser === "undefined" || typeof document === "undefined") {
+    return showResolvedValues ? replacePlaceholderTokens(templateHtml) : templateHtml;
   }
 
-  const htmlDoc = new DOMParser().parseFromString(replacedHtml, "text/html");
+  const htmlDoc = new DOMParser().parseFromString(templateHtml, "text/html");
 
-  for (const anchor of Array.from(htmlDoc.querySelectorAll("a[href]"))) {
-    const href = anchor.getAttribute("href");
-    if (!href) continue;
+  if (showResolvedValues) {
+    // Resolve placeholders in all attributes (href, src, title, etc.) as plain text values.
+    for (const element of Array.from(htmlDoc.body.querySelectorAll("*"))) {
+      for (const attribute of Array.from(element.attributes)) {
+        const resolvedAttributeValue = replacePlaceholderTokens(attribute.value);
+        if (resolvedAttributeValue !== attribute.value) {
+          element.setAttribute(attribute.name, resolvedAttributeValue);
+        }
+      }
+    }
+  }
 
-    const resolvedHref = replacePlaceholderTokens(href);
-    if (resolvedHref !== href) {
-      anchor.setAttribute("href", resolvedHref);
+  // Highlight only text-node replacements so users can see injected XML values.
+  const textWalker = htmlDoc.createTreeWalker(htmlDoc.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+
+  while (textWalker.nextNode()) {
+    textNodes.push(textWalker.currentNode as Text);
+  }
+
+  for (const textNode of textNodes) {
+    const textContent = textNode.nodeValue ?? "";
+    if (!textContent) {
+      continue;
+    }
+
+    const regex = new RegExp(ANY_PLACEHOLDER_PATTERN.source, "gi");
+    const matches = Array.from(textContent.matchAll(regex));
+    if (matches.length === 0) {
+      continue;
+    }
+
+    const fragment = htmlDoc.createDocumentFragment();
+    let cursor = 0;
+    let hasReplacement = false;
+
+    for (const match of matches) {
+      const fullMatch = match[0] ?? "";
+      const matchIndex = match.index ?? 0;
+
+      if (matchIndex > cursor) {
+        fragment.appendChild(htmlDoc.createTextNode(textContent.slice(cursor, matchIndex)));
+      }
+
+      const token =
+        String(match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
+
+      const resolvedValue = token ? resolvePlaceholderValue(token, lookup) : null;
+
+      if (showResolvedValues && resolvedValue !== null) {
+        if (highlightPlaceholders) {
+          const highlightedSpan = htmlDoc.createElement("span");
+          highlightedSpan.className = "cms-placeholder-highlight";
+          highlightedSpan.textContent = resolvedValue;
+          fragment.appendChild(highlightedSpan);
+        } else {
+          fragment.appendChild(htmlDoc.createTextNode(resolvedValue));
+        }
+        hasReplacement = true;
+      } else if (!showResolvedValues) {
+        if (highlightPlaceholders) {
+          const highlightedSpan = htmlDoc.createElement("span");
+          highlightedSpan.className = "cms-placeholder-highlight";
+          highlightedSpan.textContent = fullMatch;
+          fragment.appendChild(highlightedSpan);
+        } else {
+          fragment.appendChild(htmlDoc.createTextNode(fullMatch));
+        }
+        hasReplacement = true;
+      } else {
+        fragment.appendChild(htmlDoc.createTextNode(fullMatch));
+      }
+
+      cursor = matchIndex + fullMatch.length;
+    }
+
+    if (cursor < textContent.length) {
+      fragment.appendChild(htmlDoc.createTextNode(textContent.slice(cursor)));
+    }
+
+    if (hasReplacement) {
+      textNode.parentNode?.replaceChild(fragment, textNode);
     }
   }
 
@@ -290,6 +369,8 @@ export default function Home() {
   const [cmsLoading, setCmsLoading] = useState(false);
   const [cmsErrorMessage, setCmsErrorMessage] = useState<string | null>(null);
   const [cmsNotConfigured, setCmsNotConfigured] = useState(false);
+  const [showResolvedCmsValues, setShowResolvedCmsValues] = useState(true);
+  const [highlightCmsPlaceholders, setHighlightCmsPlaceholders] = useState(true);
   const [cmsTitle, setCmsTitle] = useState("");
   const [cmsHtml, setCmsHtml] = useState("");
   const [cmsRaw, setCmsRaw] = useState<unknown | null>(null);
@@ -594,12 +675,12 @@ export default function Home() {
     : "";
 
   const resolvedCmsHtml = useMemo(() => {
-    if (!cmsHtml || !filteredRecord) {
+    if (!cmsHtml) {
       return cmsHtml;
     }
 
-    return replaceCmsPlaceholders(cmsHtml, filteredRecord);
-  }, [cmsHtml, filteredRecord]);
+    return replaceCmsPlaceholders(cmsHtml, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders);
+  }, [cmsHtml, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 
   useEffect(() => {
     const loadCmsContent = async () => {
@@ -746,6 +827,43 @@ export default function Home() {
           <h2 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1.1rem" }}>
             CMS Letter Content
           </h2>
+
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              marginBottom: "0.85rem",
+              fontSize: "0.9rem",
+              color: cmsFrameMutedTextColor,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showResolvedCmsValues}
+              onChange={(event) => setShowResolvedCmsValues(event.target.checked)}
+            />
+            {showResolvedCmsValues ? "Showing XML values" : "Showing placeholders"}
+          </label>
+
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              marginBottom: "0.85rem",
+              fontSize: "0.9rem",
+              color: cmsFrameMutedTextColor,
+              marginLeft: "1rem",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={highlightCmsPlaceholders}
+              onChange={(event) => setHighlightCmsPlaceholders(event.target.checked)}
+            />
+            Highlight Dynamic tags
+          </label>
 
           {!currentLetterCode && (
             <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>
