@@ -382,6 +382,7 @@ export default function Home() {
     primaryColorHex?: string;
     disclaimer?: string;
   } | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string>("");
 
   // Convert an XML element recursively into a plain JavaScript object.
   const elementToObject = (element: Element): XmlObject => {
@@ -474,8 +475,11 @@ export default function Home() {
     if (!file) {
       setErrorMessage(null);
       setRecords([]);
+      setSelectedFileName("");
       return;
     }
+
+    setSelectedFileName(file.name);
 
     setIsLoading(true);
     setErrorMessage(null);
@@ -989,7 +993,7 @@ export default function Home() {
                 gap: "0.75rem",
               }}
             >
-              <label htmlFor="xml-file">File path</label>
+              <label htmlFor="xml-file" style={{ display: "block", marginBottom: "0.5rem" }}>File path</label>
               <input
                 id="xml-file"
                 type="file"
@@ -997,12 +1001,39 @@ export default function Home() {
                 onChange={handleLocalFileSelect}
                 disabled={isLoading}
                 style={{
-                  padding: "0.5rem",
-                  border: "1px solid #b9b9b9",
-                  borderRadius: "6px",
-                  backgroundColor: "#fff",
+                  display: "none",
                 }}
               />
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <label
+                  htmlFor="xml-file"
+                  style={{
+                    display: "inline-block",
+                    padding: "0.6rem 1.2rem",
+                    backgroundColor: "#0066cc",
+                    color: "#fff",
+                    borderRadius: "6px",
+                    cursor: isLoading ? "not-allowed" : "pointer",
+                    border: "1px solid #0052a3",
+                    fontWeight: "500",
+                    opacity: isLoading ? 0.6 : 1,
+                    transition: "background-color 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isLoading) {
+                      (e.currentTarget as HTMLElement).style.backgroundColor = "#0052a3";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = "#0066cc";
+                  }}
+                >
+                  Choose File
+                </label>
+                <span style={{ color: selectedFileName ? "#333" : "#999", fontSize: "0.9rem" }}>
+                  {selectedFileName || "No file selected"}
+                </span>
+              </div>
 
               <small style={{ color: "#555" }}>
                 Select an XML file from your computer to preview the letter content.
