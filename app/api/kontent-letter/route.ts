@@ -41,6 +41,12 @@ type CancelConfig = {
   cxPremiumDueDateParam: string;
 };
 
+type CoiConfig = {
+  letterCode: string;
+  requiredSpaceCodename: string;
+  requiredTemplateNameFragment: string;
+};
+
 type LetterCodeRule = {
   selectorQueryParam?: string;
   // When true, do not use rule hints to jump to another letter_type.
@@ -79,6 +85,12 @@ const CANCEL_CONFIG: CancelConfig = {
   cancelWithCoolingPeriodParam: "cancelWithCoolingPeriod",
   cancelWithinCoolingPeriodParam: "cancelWithinCoolingPeriod",
   cxPremiumDueDateParam: "cxPremiumDueDate",
+};
+
+const COI_CONFIG: CoiConfig = {
+  letterCode: "COI",
+  requiredSpaceCodename: "COI",
+  requiredTemplateNameFragment: "NEW BUSINESS",
 };
 
 function readTextValue(value: unknown): string {
@@ -177,6 +189,17 @@ function readLinkedCodenames(element?: KontentElement): string[] {
       return "";
     })
     .filter((codename) => codename.length > 0);
+}
+
+function readSpaceCodenamesFromLetterType(item: KontentItem): string[] {
+  const elements = item.elements ?? {};
+
+  return [
+    ...readLinkedCodenames(elements.space),
+    ...readLinkedCodenames(elements.spaces),
+    ...readLinkedCodenames(elements.letter_space),
+    ...readLinkedCodenames(elements.letter_spaces),
+  ];
 }
 
 function findMatchingLetterTypeItem(items: KontentItem[], letterCode: string): KontentItem | null {
@@ -398,6 +421,192 @@ async function fetchBrandPartnerItems(
   }
 
   return (await response.json()) as KontentDeliveryResponse;
+}
+
+async function fetchCoiSpaceItem(
+  projectId: string,
+  headers: Record<string, string>,
+  apiHost: string,
+  requiredSpaceCodename: string
+): Promise<KontentItem | null> {
+  // Step 1 hierarchy query: resolve the `space` item by codename/name = COI.
+  // Some projects use different casing or do not support system.codename filter consistently,
+  // so we query by type and match locally.
+  const normalizedTarget = normalizeCodeKey(requiredSpaceCodename);
+
+  const response = await fetch(
+    `${apiHost}/${projectId}/items?system.type[eq]=space&limit=200`,
+    {
+      cache: "no-store",
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as KontentDeliveryResponse;
+  const items = Array.isArray(payload.items) ? payload.items : [];
+
+  const matchedSpace = items.find((item) => {
+    const codename = readTextValue(item.system?.codename);
+    const name = readTextValue(item.system?.name);
+
+    return (
+      normalizeCodeKey(codename) === normalizedTarget ||
+      normalizeCodeKey(name) === normalizedTarget
+    );
+  });
+
+  if (matchedSpace) {
+    return matchedSpace;
+  }
+
+  // Final fallback: some models represent "space" with different content type names.
+  const fallbackResponse = await fetch(
+    `${apiHost}/${projectId}/items?limit=200`,
+    {
+      cache: "no-store",
+      headers,
+    }
+  );
+
+  if (!fallbackResponse.ok) {
+    return null;
+  }
+
+  const fallbackPayload = (await fallbackResponse.json()) as KontentDeliveryResponse;
+  const fallbackItems = Array.isArray(fallbackPayload.items) ? fallbackPayload.items : [];
+
+  return (
+    fallbackItems.find((item) => {
+      const type = readTextValue(item.system?.type);
+      const codename = readTextValue(item.system?.codename);
+      const name = readTextValue(item.system?.name);
+
+      if (!normalizeCodeKey(type).includes("SPACE")) {
+        return false;
+      }
+
+      return (
+        normalizeCodeKey(codename) === normalizedTarget ||
+        normalizeCodeKey(name) === normalizedTarget
+      );
+    }) || null
+  );
+}
+
+async function fetchCoiLetterTypes(
+  projectId: string,
+  headers: Record<string, string>,
+  apiHost: string,
+  brandPartnerName: string
+): Promise<KontentDeliveryResponse> {
+  // Step 2 hierarchy query: narrow to LetterType records, then filter by item name.
+  const response = await fetch(
+    `${apiHost}/${projectId}/items?system.type[eq]=letter_type&depth=10&limit=200`,
+    {
+      cache: "no-store",
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to query COI letter types. Status: ${response.status}.`);
+  }
+
+  const payload = (await response.json()) as KontentDeliveryResponse;
+  const allItems = Array.isArray(payload.items) ? payload.items : [];
+  const normalizedTarget = normalizeCodeKey(brandPartnerName);
+
+  const matchedItems = allItems.filter((item) => {
+    if (item.system?.type !== "letter_type") {
+      return false;
+    }
+
+    const name = readTextValue(item.system?.name);
+    return normalizeCodeKey(name) === normalizedTarget;
+  });
+
+  return {
+    items: matchedItems,
+    modular_content: payload.modular_content ?? {},
+  };
+}
+
+function resolveCoiTemplate(
+  letterTypeItem: KontentItem,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  requiredTemplateNameFragment: string
+): KontentItem | null {
+  // Step 3 hierarchy query: from selected LetterType, find linked template by name contains "New Business".
+  const linkedTemplateCodenames = readLinkedCodenames(letterTypeItem.elements?.letter_templates);
+
+  if (linkedTemplateCodenames.length === 0) {
+    return null;
+  }
+
+  const normalizedNameFragmentKey = normalizeCodeKey(requiredTemplateNameFragment);
+
+  const matchesNewBusinessVariant = (value: string): boolean => {
+    const normalizedValue = normalizeCodeKey(value);
+    const acceptedVariants = [
+      normalizedNameFragmentKey,
+      normalizeCodeKey("newbusiness"),
+      normalizeCodeKey("new business"),
+      normalizeCodeKey("new_business"),
+      normalizeCodeKey("new-business"),
+    ];
+
+    return acceptedVariants.some((variant) =>
+      normalizedValue.includes(variant)
+    );
+  };
+
+  // Highest-priority rule requested by QA: match linked template codename
+  // containing "newbusiness" before considering other metadata fields.
+  const codenameFirstMatch = linkedTemplateCodenames.find((codename) =>
+    matchesNewBusinessVariant(codename)
+  );
+
+  if (codenameFirstMatch) {
+    const codenameTemplate = readItemByCodename(codenameFirstMatch, allItems, modularContent);
+    if (codenameTemplate) {
+      return codenameTemplate;
+    }
+  }
+
+  const readTemplateMatchCandidates = (template: KontentItem): string[] => {
+    const elements = template.elements ?? {};
+
+    return [
+      readTextValue(template.system?.name),
+      readTextValue(template.system?.codename),
+      readStringElementValue(elements.title),
+      readStringElementValue(elements.heading),
+      readStringElementValue(elements.template_name),
+      readStringElementValue(elements.letter_template_name),
+      readStringElementValue(elements.name),
+    ]
+      .map((value) => normalizeCodeKey(value))
+      .filter((value) => value.length > 0);
+  };
+
+  for (const codename of linkedTemplateCodenames) {
+    const template = readItemByCodename(codename, allItems, modularContent);
+    if (!template) {
+      continue;
+    }
+
+    const candidateKeys = readTemplateMatchCandidates(template);
+    if (candidateKeys.some((candidate) => matchesNewBusinessVariant(candidate))) {
+      return template;
+    }
+  }
+
+  return null;
 }
 
 function resolveBrandPartner(
@@ -904,6 +1113,105 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(clWaiverResult.template, items, modularContent);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === COI_CONFIG.letterCode) {
+      if (!partnerName.trim()) {
+        return NextResponse.json(
+          {
+            error: "Missing required selector value 'partnerName' for letter code COI.",
+          },
+          { status: 400 }
+        );
+      }
+
+      // COI hierarchy:
+      // 1) Find Space by codename COI.
+      // 2) Find LetterType where item name matches Brand Partner Name.
+      // 3) From linked letter templates, choose item name containing "New Business".
+      const coiSpaceItem = await fetchCoiSpaceItem(
+        projectId,
+        headers,
+        apiHost,
+        COI_CONFIG.requiredSpaceCodename
+      );
+
+
+      // Fetch all letter_type items and filter by partnerName dynamically.
+      const allLetterTypePayload = await fetchKontentItems(projectId, headers, apiHost);
+      const allLetterTypeItems = Array.isArray(allLetterTypePayload.items)
+        ? allLetterTypePayload.items.filter((item) => item.system?.type === "letter_type")
+        : [];
+      const allModularContent = allLetterTypePayload.modular_content ?? {};
+      const coiSpaceCodename = readTextValue(coiSpaceItem?.system?.codename);
+
+      // Relaxed partner name matching: ignore case, spaces, dashes, underscores.
+      const normalizeLoose = (value: string) => value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedPartnerName = normalizeLoose(partnerName);
+
+      const eligibleCoiLetterTypeItems = allLetterTypeItems.filter((item) => {
+        const name = readTextValue(item.system?.name);
+        if (normalizeLoose(name) !== normalizedPartnerName) {
+          return false;
+        }
+        const linkedSpaceCodenames = readSpaceCodenamesFromLetterType(item);
+        if (!coiSpaceCodename || linkedSpaceCodenames.length === 0) {
+          return true;
+        }
+        return linkedSpaceCodenames.some(
+          (codename) => normalizeCodeKey(codename) === normalizeCodeKey(coiSpaceCodename)
+        );
+      });
+
+      if (eligibleCoiLetterTypeItems.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              `No COI LetterType item found where name matches Brand Partner '${partnerName}'.`,
+          },
+          { status: 404 }
+        );
+      }
+
+      const combinedItems = [...allLetterTypeItems, ...items];
+      const combinedModularContent = { ...allModularContent, ...modularContent };
+
+      let coiTemplate: KontentItem | null = null;
+      for (const letterTypeItem of eligibleCoiLetterTypeItems) {
+        const template = resolveCoiTemplate(
+          letterTypeItem,
+          combinedItems,
+          combinedModularContent,
+          COI_CONFIG.requiredTemplateNameFragment
+        );
+        if (template) {
+          coiTemplate = template;
+          break;
+        }
+      }
+
+      if (!coiTemplate) {
+        return NextResponse.json(
+          {
+            error:
+              "No COI letter template found where template item name contains 'New Business'.",
+          },
+          { status: 404 }
+        );
+      }
+
+      const content = extractContent(
+        coiTemplate,
+        combinedItems,
+        combinedModularContent
+      );
       return NextResponse.json(
         {
           ...content,
