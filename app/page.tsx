@@ -371,6 +371,8 @@ export default function Home() {
   const [cmsNotConfigured, setCmsNotConfigured] = useState(false);
   const [showResolvedCmsValues, setShowResolvedCmsValues] = useState(true);
   const [highlightCmsPlaceholders, setHighlightCmsPlaceholders] = useState(true);
+  // Toggle to switch between draft (preview API) and published (delivery API) content.
+  const [usePreviewContent, setUsePreviewContent] = useState(true);
   const [cmsTitle, setCmsTitle] = useState("");
   const [cmsHtml, setCmsHtml] = useState("");
   const [cmsRaw, setCmsRaw] = useState<unknown | null>(null);
@@ -740,6 +742,9 @@ export default function Home() {
           queryParams.set("cxPremiumDueDate", cxPremiumDueDate);
         }
 
+        // Pass content mode preference to API.
+        queryParams.set("usePreview", usePreviewContent ? "true" : "false");
+
         const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
 
         const payload = (await response.json()) as {
@@ -789,6 +794,7 @@ export default function Home() {
     cancellationReason,
     cancelWithCoolingPeriod,
     cxPremiumDueDate,
+    usePreviewContent,
   ]);
 
   const cmsLetterLogoSrc = cmsBrandPartner?.logoUrl || fallbackLogoSrc;
@@ -815,12 +821,19 @@ export default function Home() {
         style={{
           display: "grid",
           gap: "1rem",
-          gridTemplateColumns: "minmax(0, 1.7fr) minmax(0, 1fr)",
+          // Swapped panel positions: narrow column on the left, wide column on the right.
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.7fr)",
           alignItems: "start",
         }}
       >
         <article
           style={{
+            // CMS panel moved to the right side while keeping its original styling/behavior.
+            gridColumn: "2",
+            // Keep both columns in the same first row to avoid extra top whitespace on the left.
+            gridRow: "1",
+            // Prevent content sizing from forcing overlap across grid columns.
+            minWidth: 0,
             border: "1px solid #d6d6d6",
             borderRadius: "8px",
             backgroundColor: cmsLetterLayerBackground,
@@ -868,6 +881,43 @@ export default function Home() {
             />
             Highlight Dynamic tags
           </label>
+
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              marginBottom: "0.85rem",
+              marginLeft: "1rem",
+            }}
+          >
+            <label
+              htmlFor="content-mode-select"
+              style={{
+                fontSize: "0.9rem",
+                color: cmsFrameMutedTextColor,
+              }}
+            >
+              Content Mode:
+            </label>
+            <select
+              id="content-mode-select"
+              value={usePreviewContent ? "draft" : "published"}
+              onChange={(event) => setUsePreviewContent(event.target.value === "draft")}
+              style={{
+                fontSize: "0.9rem",
+                padding: "0.35rem 0.5rem",
+                backgroundColor: "#ffffff",
+                color: "#111111",
+                border: "1px solid #d6d6d6",
+                borderRadius: "4px",
+                cursor: "pointer",
+              }}
+            >
+              <option value="draft">📝 Draft Content</option>
+              <option value="published">✅ Published Content</option>
+            </select>
+          </div>
 
           {!currentLetterCode && (
             <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>
@@ -974,9 +1024,21 @@ export default function Home() {
           )}
         </article>
 
-        <section style={{ display: "grid", gap: "1rem" }}>
+        <section
+          style={{
+            // File upload + XML record panels moved to the left side.
+            gridColumn: "1",
+            // Keep both columns in the same first row to avoid extra top whitespace on the left.
+            gridRow: "1",
+            // Prevent wide loaded XML content from spilling into the right column.
+            minWidth: 0,
+            display: "grid",
+            gap: "1rem",
+          }}
+        >
           <article
             style={{
+              minWidth: 0,
               border: "1px solid #d6d6d6",
               borderRadius: "8px",
               backgroundColor: "#fafafa",
@@ -1047,6 +1109,7 @@ export default function Home() {
 
           <article
             style={{
+              minWidth: 0,
               border: "1px solid #d6d6d6",
               borderRadius: "8px",
               backgroundColor: "#ffffff",

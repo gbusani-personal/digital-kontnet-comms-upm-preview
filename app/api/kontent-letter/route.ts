@@ -1026,6 +1026,7 @@ function resolveCancelTemplate(
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const letterCode = searchParams.get("letterCode");
+  const usePreviewParam = searchParams.get("usePreview");
   const underwriter = searchParams.get("underwriter") || "";
   const partnerName = searchParams.get("partnerName") || "";
 
@@ -1060,24 +1061,58 @@ export async function GET(request: Request) {
   }
 
   try {
-    const usePreview = Boolean(previewApiKey);
-    const apiHost = usePreview
-      ? "https://preview-deliver.kontent.ai"
-      : "https://deliver.kontent.ai";
-    const activeApiKey = usePreview ? previewApiKey : deliveryApiKey;
+    // Component content (Brand Partners, Spaces, LetterTypes) always uses preview/draft for consistent resolution.
+    const componentApiHost = "https://preview-deliver.kontent.ai";
+    const componentApiKey = previewApiKey;
 
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-    };
-
-    // Use preview key when available so unpublished/current content is included.
-    if (activeApiKey) {
-      headers.Authorization = `Bearer ${activeApiKey}`;
+    if (!componentApiKey) {
+      return NextResponse.json(
+        {
+          error: "Preview API key is not configured. Ensure NEXT_PUBLIC_KONTENT_PREVIEW_API_KEY is set.",
+        },
+        { status: 500 }
+      );
     }
 
-    const payload = await fetchKontentItems(projectId, headers, apiHost);
+    const componentHeaders: Record<string, string> = {
+      Accept: "application/json",
+      Authorization: `Bearer ${componentApiKey}`,
+    };
+
+    // Letter Template content mode can be toggled between draft and published.
+    let usePreview: boolean;
+    if (usePreviewParam !== null) {
+      usePreview = usePreviewParam === "true";
+    } else {
+      usePreview = Boolean(previewApiKey);
+    }
+
+    const templateApiHost = usePreview
+      ? "https://preview-deliver.kontent.ai"
+      : "https://deliver.kontent.ai";
+    const templateApiKey = usePreview ? previewApiKey : deliveryApiKey;
+
+    // Validate that the required API key is configured for the requested template mode.
+    if (!templateApiKey) {
+      const mode = usePreview ? "preview/draft" : "published/delivery";
+      return NextResponse.json(
+        {
+          error: `${mode} API key is not configured for letter templates. Ensure both NEXT_PUBLIC_KONTENT_DELIVERY_API_KEY and NEXT_PUBLIC_KONTENT_PREVIEW_API_KEY are set.`,
+        },
+        { status: 500 }
+      );
+    }
+
+    const templateHeaders: Record<string, string> = {
+      Accept: "application/json",
+      Authorization: `Bearer ${templateApiKey}`,
+    };
+
+    // Fetch Letter Template with content mode toggle.
+    const payload = await fetchKontentItems(projectId, templateHeaders, templateApiHost);
+    // Fetch component content (Brand Partners) from stable preview/draft endpoint.
     const brandPartnerPayload = partnerName
-      ? await fetchBrandPartnerItems(projectId, headers, apiHost)
+      ? await fetchBrandPartnerItems(projectId, componentHeaders, componentApiHost)
       : { items: [], modular_content: {} };
     
     const resolvedBrandPartner = partnerName
@@ -1138,14 +1173,14 @@ export async function GET(request: Request) {
       // 3) From linked letter templates, choose item name containing "New Business".
       const coiSpaceItem = await fetchCoiSpaceItem(
         projectId,
-        headers,
-        apiHost,
+        componentHeaders,
+        componentApiHost,
         COI_CONFIG.requiredSpaceCodename
       );
 
 
       // Fetch all letter_type items and filter by partnerName dynamically.
-      const allLetterTypePayload = await fetchKontentItems(projectId, headers, apiHost);
+      const allLetterTypePayload = await fetchKontentItems(projectId, componentHeaders, componentApiHost);
       const allLetterTypeItems = Array.isArray(allLetterTypePayload.items)
         ? allLetterTypePayload.items.filter((item) => item.system?.type === "letter_type")
         : [];
