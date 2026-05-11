@@ -54,6 +54,13 @@ type CoiConfig = {
   requiredTemplateNameFragment: string;
 };
 
+type RenewalConfig = {
+  letterCode: string;
+  letterTypeParam: string;
+  letterReasonCodeParam: string;
+  partnerNameParam: string;
+};
+
 type SingleTemplateLetterConfig = {
   letterCode: string;
 };
@@ -109,6 +116,13 @@ const COI_CONFIG: CoiConfig = {
   letterCode: "COI",
   requiredSpaceCodename: "COI",
   requiredTemplateNameFragment: "NEW BUSINESS",
+};
+
+const RENEWAL_CONFIG: RenewalConfig = {
+  letterCode: "RENEWAL",
+  letterTypeParam: "letterType",
+  letterReasonCodeParam: "letterReasonCode",
+  partnerNameParam: "partnerName",
 };
 
 const SINGLE_TEMPLATE_LETTER_CONFIGS: SingleTemplateLetterConfig[] = [
@@ -712,6 +726,138 @@ function resolveCoiTemplate(
   }
 
   return null;
+}
+
+function resolveRenewalTemplate(
+  partnerLetterTypes: KontentItem[],
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  letterType: string,
+  letterReasonCode: string
+): { template: KontentItem | null; expectedTemplateName?: string; error?: string; status?: number } {
+  if (!letterType.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'letterType' for letter code RENEWAL.",
+      status: 400,
+    };
+  }
+
+  const normalizedLetterType = normalizeCodeKey(letterType);
+  const normalizedReasonCode = normalizeCodeKey(letterReasonCode);
+
+  let expectedTemplateName = "";
+
+  if (normalizedLetterType === "STANDARD") {
+    if (!normalizedReasonCode) {
+      return {
+        template: null,
+        error: "Missing required selector value 'letterReasonCode' for RENEWAL letterType Standard.",
+        status: 400,
+      };
+    }
+    if (normalizedReasonCode === "NOR") {
+      expectedTemplateName = "AUTO RENEWAL";
+    } else if (normalizedReasonCode === "FOR") {
+      expectedTemplateName = "AUTO RENEWAL - FORCED";
+    }
+  } else if (normalizedLetterType === "RENEWALOFFER" || normalizedLetterType === "OFFER") {
+    if (!normalizedReasonCode) {
+      return {
+        template: null,
+        error: "Missing required selector value 'letterReasonCode' for RENEWAL letterType Renewal_Offer.",
+        status: 400,
+      };
+    }
+    if (normalizedReasonCode === "NOR") {
+      expectedTemplateName = "RENEWAL OFFER";
+    } else if (normalizedReasonCode === "FOR") {
+      expectedTemplateName = "RENEWAL OFFER - FORCED";
+    }
+  } else if (normalizedLetterType === "RENEWALACCEPTED" || normalizedLetterType === "ACCEPTANCE") {
+    expectedTemplateName = "RENEWAL ACCEPTANCE";
+  }
+
+  if (!expectedTemplateName) {
+    return {
+      template: null,
+      error:
+        `No RENEWAL template mapping found for Letter_Type '${letterType}' and LetterReasonCode '${letterReasonCode}'.`,
+      status: 404,
+    };
+  }
+
+  const expectedNameKey = normalizeCodeKey(expectedTemplateName);
+  const acceptedExpectedKeys = [
+    expectedNameKey,
+    normalizeCodeKey(expectedTemplateName.replace(/\s+/g, "")),
+    normalizeCodeKey(expectedTemplateName.replace(/\s+/g, "_")),
+    normalizeCodeKey(expectedTemplateName.replace(/\s+/g, "-")),
+  ];
+
+  const readTemplateMatchCandidates = (template: KontentItem): string[] => {
+    const elements = template.elements ?? {};
+
+    return [
+      readTextValue(template.system?.name),
+      readTextValue(template.system?.codename),
+      readStringElementValue(elements.title),
+      readStringElementValue(elements.heading),
+      readStringElementValue(elements.template_name),
+      readStringElementValue(elements.letter_template_name),
+      readStringElementValue(elements.name),
+    ]
+      .map((value) => normalizeCodeKey(value))
+      .filter((value) => value.length > 0);
+  };
+
+  for (const partnerLetterType of partnerLetterTypes) {
+    const linkedTemplateCodenames = readLinkedTemplateCodenames(partnerLetterType.elements ?? {});
+
+    for (const codename of linkedTemplateCodenames) {
+      const template = readTemplateByCodename(codename, allItems, modularContent);
+      if (!template) {
+        continue;
+      }
+
+      const candidateKeys = readTemplateMatchCandidates(template);
+      const isMatch = candidateKeys.some((candidate) =>
+        acceptedExpectedKeys.some(
+          (expectedKey) => candidate.includes(expectedKey) || expectedKey.includes(candidate)
+        )
+      );
+
+      if (isMatch) {
+        return { template, expectedTemplateName };
+      }
+    }
+  }
+
+  const allTemplateItems = [
+    ...Object.values(modularContent).filter((item) => item.system?.type === "letter_template"),
+    ...allItems.filter((item) => item.system?.type === "letter_template"),
+  ];
+
+  const fallbackTemplate = allTemplateItems.find((template) => {
+    const candidateKeys = readTemplateMatchCandidates(template);
+    return candidateKeys.some((candidate) =>
+      acceptedExpectedKeys.some(
+        (expectedKey) => candidate.includes(expectedKey) || expectedKey.includes(candidate)
+      )
+    );
+  });
+
+  if (fallbackTemplate) {
+    return { template: fallbackTemplate, expectedTemplateName };
+  }
+
+  return {
+    template: null,
+    expectedTemplateName,
+    error:
+      `No RENEWAL letter_template matched '${expectedTemplateName}' in the partner-matched letter_type links.`,
+    status: 404,
+  };
 }
 
 function resolveBrandPartner(
@@ -1550,6 +1696,100 @@ export async function GET(request: Request) {
         combinedItems,
         combinedModularContent
       );
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === RENEWAL_CONFIG.letterCode) {
+      const renewalLetterType = searchParams.get(RENEWAL_CONFIG.letterTypeParam) || "";
+      const renewalLetterReasonCode =
+        searchParams.get(RENEWAL_CONFIG.letterReasonCodeParam) || "";
+      const renewalPartnerName = searchParams.get(RENEWAL_CONFIG.partnerNameParam) || partnerName;
+
+      if (!renewalPartnerName.trim()) {
+        return NextResponse.json(
+          {
+            error: "Missing required selector value 'partnerName' for letter code RENEWAL.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const allLetterTypePayload = await fetchKontentItems(
+        projectId,
+        componentHeaders,
+        componentApiHost
+      );
+      const allLetterTypeItems = Array.isArray(allLetterTypePayload.items)
+        ? allLetterTypePayload.items.filter((item) => item.system?.type === "letter_type")
+        : [];
+      const allModularContent = allLetterTypePayload.modular_content ?? {};
+      const combinedItems = [...allLetterTypeItems, ...items];
+      const combinedModularContent = { ...allModularContent, ...modularContent };
+
+      const normalizeLoose = (value: string) => value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const normalizedPartnerName = normalizeLoose(renewalPartnerName);
+
+      const partnerLetterTypeItems = allLetterTypeItems.filter((item) => {
+        const elements = item.elements ?? {};
+        const linkedBrandPartnerCode = readLinkedCodenames(elements.brand_partners)[0] || "";
+        const partnerCandidates = [
+          readTextValue(item.system?.name),
+          readTextValue(item.system?.codename),
+          readStringElementValue(elements.partner_name),
+          readStringElementValue(elements.brand_partner_name),
+          readStringElementValue(elements.data_macros___brand_partner__partnername),
+          linkedBrandPartnerCode,
+        ]
+          .map((value) => normalizeLoose(value))
+          .filter(Boolean);
+
+        return partnerCandidates.some(
+          (candidate) =>
+            candidate === normalizedPartnerName ||
+            candidate.includes(normalizedPartnerName) ||
+            normalizedPartnerName.includes(candidate)
+        );
+      });
+
+      if (partnerLetterTypeItems.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              `No RENEWAL LetterType item found where partner/name matches '${renewalPartnerName}'.`,
+          },
+          { status: 404 }
+        );
+      }
+
+      const renewalResult = resolveRenewalTemplate(
+        partnerLetterTypeItems,
+        combinedItems,
+        combinedModularContent,
+        renewalLetterType,
+        renewalLetterReasonCode
+      );
+
+      if (!renewalResult.template) {
+        return NextResponse.json(
+          {
+            error: renewalResult.error || "Unable to resolve RENEWAL template.",
+          },
+          { status: renewalResult.status || 404 }
+        );
+      }
+
+      const content = extractContent(
+        renewalResult.template,
+        combinedItems,
+        combinedModularContent
+      );
+
       return NextResponse.json(
         {
           ...content,

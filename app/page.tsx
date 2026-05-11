@@ -899,6 +899,15 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "IDRDelayReason")
     : "";
 
+  const renewalLetterType = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "Letter_Type") ||
+      findFirstStringValueByKey(filteredRecord, "LetterType")
+    : "";
+
+  const renewalLetterReasonCode = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "LetterReasonCode")
+    : "";
+
   const activeContent = useMemo(() => {
     return usePreviewContent ? draftContent : publishedContent;
   }, [usePreviewContent, draftContent, publishedContent]);
@@ -1008,6 +1017,14 @@ export default function Home() {
             params.set("idrDelayReason", idrDelayReason);
           }
 
+          if (renewalLetterType) {
+            params.set("letterType", renewalLetterType);
+          }
+
+          if (renewalLetterReasonCode) {
+            params.set("letterReasonCode", renewalLetterReasonCode);
+          }
+
           return params;
         };
 
@@ -1016,7 +1033,8 @@ export default function Home() {
           queryParams.set("usePreview", isPreview ? "true" : "false");
 
           const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
-          const payload = (await response.json()) as {
+          const responseText = await response.text();
+          let payload: {
             error?: string;
             title?: string;
             html?: string;
@@ -1029,7 +1047,20 @@ export default function Home() {
               primaryColorHex?: string;
               disclaimer?: string;
             } | null;
-          };
+          } = {};
+
+          if (responseText.trim()) {
+            try {
+              payload = JSON.parse(responseText) as typeof payload;
+            } catch {
+              const modeLabel = isPreview ? "Draft" : "Published";
+              const modeError = new Error(
+                `${modeLabel} content endpoint returned a non-JSON response (${response.status}).`
+              ) as Error & { status?: number };
+              modeError.status = response.status;
+              throw modeError;
+            }
+          }
 
           if (!response.ok) {
             const modeError = new Error(payload.error || `Unable to load CMS content (${response.status}).`) as Error & {
@@ -1111,6 +1142,8 @@ export default function Home() {
     taskSubcategoryCode,
     upmTrigger,
     idrDelayReason,
+    renewalLetterType,
+    renewalLetterReasonCode,
   ]);
 
   const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;
