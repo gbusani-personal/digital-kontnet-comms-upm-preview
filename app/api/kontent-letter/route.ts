@@ -47,6 +47,10 @@ type CoiConfig = {
   requiredTemplateNameFragment: string;
 };
 
+type SingleTemplateLetterConfig = {
+  letterCode: string;
+};
+
 type LetterCodeRule = {
   selectorQueryParam?: string;
   // When true, do not use rule hints to jump to another letter_type.
@@ -92,6 +96,15 @@ const COI_CONFIG: CoiConfig = {
   requiredSpaceCodename: "COI",
   requiredTemplateNameFragment: "NEW BUSINESS",
 };
+
+const SINGLE_TEMPLATE_LETTER_CONFIGS: SingleTemplateLetterConfig[] = [
+  { letterCode: "DDMANDATE" },
+  { letterCode: "ADHOCPAYMENTS" },
+];
+
+const SINGLE_TEMPLATE_LETTER_CODE_KEYS = new Set(
+  SINGLE_TEMPLATE_LETTER_CONFIGS.map((config) => normalizeCodeKey(config.letterCode))
+);
 
 function readTextValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -191,6 +204,39 @@ function readLinkedCodenames(element?: KontentElement): string[] {
     .filter((codename) => codename.length > 0);
 }
 
+function readLinkedTemplateCodenames(elements: Record<string, KontentElement>): string[] {
+  const orderedKeys = [
+    "letter_templates",
+    "letter_template",
+    "templates",
+    "template",
+  ];
+
+  const allKeys = Array.from(
+    new Set([
+      ...orderedKeys,
+      ...Object.keys(elements),
+    ])
+  );
+
+  const codenames: string[] = [];
+
+  for (const key of allKeys) {
+    const linked = readLinkedCodenames(elements[key]);
+    if (linked.length === 0) {
+      continue;
+    }
+
+    for (const codename of linked) {
+      if (!codenames.includes(codename)) {
+        codenames.push(codename);
+      }
+    }
+  }
+
+  return codenames;
+}
+
 function readSpaceCodenamesFromLetterType(item: KontentItem): string[] {
   const elements = item.elements ?? {};
 
@@ -236,7 +282,52 @@ function findMatchingLetterTypeItem(items: KontentItem[], letterCode: string): K
       normalizeCode(readTextValue(item.system?.codename)),
     ].filter((value) => value.length > 0);
 
-    if (candidates.some((value) => value === normalizedCode)) {
+    if (
+      candidates.some(
+        (value) =>
+          value === normalizedCode ||
+          normalizeCodeKey(value) === normalizedCodeKey
+      )
+    ) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+function findSingleTemplateLetterTypeItem(items: KontentItem[], letterCode: string): KontentItem | null {
+  const strictMatch = findMatchingLetterTypeItem(items, letterCode);
+  if (strictMatch) {
+    return strictMatch;
+  }
+
+  const normalizedCodeKey = normalizeCodeKey(letterCode);
+
+  for (const item of items) {
+    if (item.system?.type !== "letter_type") {
+      continue;
+    }
+
+    const elements = item.elements ?? {};
+    const candidates = [
+      readCodeFromElement(elements.letter_code),
+      readCodeFromElement(elements.lettercode),
+      readCodeFromElement(elements.code),
+      readCodeFromElement(elements.letter_type),
+      normalizeCode(readTextValue(item.system?.name)),
+      normalizeCode(readTextValue(item.system?.codename)),
+    ]
+      .map((value) => normalizeCodeKey(value))
+      .filter(Boolean);
+
+    const isLooseMatch = candidates.some(
+      (candidate) =>
+        candidate.includes(normalizedCodeKey) ||
+        normalizedCodeKey.includes(candidate)
+    );
+
+    if (isLooseMatch) {
       return item;
     }
   }
@@ -748,8 +839,8 @@ function resolveTemplateItem(
 ): KontentItem | null {
   const elements = letterTypeItem.elements ?? {};
 
-  // The required model is `letter_type` containing linked items in `letter_templates`.
-  const linkedTemplateCodenames = readLinkedCodenames(elements.letter_templates);
+  // Primary expected field is `letter_templates`, but some items may use alternate field codenames.
+  const linkedTemplateCodenames = readLinkedTemplateCodenames(elements);
 
   if (linkedTemplateCodenames.length === 0) {
     return null;
@@ -781,7 +872,7 @@ function resolveTemplateByCodeAcrossLetterTypes(
 
   for (const letterTypeItem of letterTypeItems) {
     const elements = letterTypeItem.elements ?? {};
-    const linkedTemplateCodenames = readLinkedCodenames(elements.letter_templates);
+    const linkedTemplateCodenames = readLinkedTemplateCodenames(elements);
 
     for (const codename of linkedTemplateCodenames) {
       const normalizedTemplateCodeKey = normalizeCodeKey(codename);
@@ -804,6 +895,60 @@ function resolveTemplateByCodeAcrossLetterTypes(
   return null;
 }
 
+function resolveTemplateDirectlyByCode(
+  items: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  letterCode: string
+): KontentItem | null {
+  const normalizedCodeKey = normalizeCodeKey(letterCode);
+  if (!normalizedCodeKey) {
+    return null;
+  }
+
+  const templateCandidates = [
+    ...Object.values(modularContent),
+    ...items,
+  ].filter((item) => item.system?.type === "letter_template");
+
+  const readCandidateKeys = (template: KontentItem): string[] => {
+    const elements = template.elements ?? {};
+
+    return [
+      readTextValue(template.system?.codename),
+      readTextValue(template.system?.name),
+      readStringElementValue(elements.title),
+      readStringElementValue(elements.heading),
+      readStringElementValue(elements.template_name),
+      readStringElementValue(elements.letter_template_name),
+      readStringElementValue(elements.name),
+      readCodeFromElement(elements.letter_code),
+      readCodeFromElement(elements.lettercode),
+      readCodeFromElement(elements.code),
+      readCodeFromElement(elements.letter_type),
+    ]
+      .map((value) => normalizeCodeKey(value))
+      .filter((value) => value.length > 0);
+  };
+
+  const exact = templateCandidates.find((template) =>
+    readCandidateKeys(template).some((candidateKey) => candidateKey === normalizedCodeKey)
+  );
+
+  if (exact) {
+    return exact;
+  }
+
+  return (
+    templateCandidates.find((template) =>
+      readCandidateKeys(template).some(
+        (candidateKey) =>
+          candidateKey.includes(normalizedCodeKey) ||
+          normalizedCodeKey.includes(candidateKey)
+      )
+    ) || null
+  );
+}
+
 function resolveTemplateBySelector(
   letterTypeItem: KontentItem,
   allItems: KontentItem[],
@@ -816,7 +961,7 @@ function resolveTemplateBySelector(
   }
 
   const elements = letterTypeItem.elements ?? {};
-  const linkedTemplateCodenames = readLinkedCodenames(elements.letter_templates);
+  const linkedTemplateCodenames = readLinkedTemplateCodenames(elements);
 
   if (linkedTemplateCodenames.length === 0) {
     return null;
@@ -985,7 +1130,7 @@ function resolveCancelTemplate(
   }
 
   const linkedTemplateCodenames = letterTypeItem
-    ? readLinkedCodenames(letterTypeItem.elements?.letter_templates)
+    ? readLinkedTemplateCodenames(letterTypeItem.elements ?? {})
     : [];
 
   for (const codename of linkedTemplateCodenames) {
@@ -1148,6 +1293,38 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(clWaiverResult.template, items, modularContent);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (SINGLE_TEMPLATE_LETTER_CODE_KEYS.has(normalizeCodeKey(normalizedLetterCode))) {
+      const singleTemplateLetterType = findSingleTemplateLetterTypeItem(items, letterCode);
+
+      let singleTemplate = singleTemplateLetterType
+        ? resolveTemplateItem(singleTemplateLetterType, items, modularContent)
+        : null;
+
+      // Fallback for cases where the letter_type linkage is unavailable but a direct template match exists.
+      if (!singleTemplate) {
+        singleTemplate = resolveTemplateDirectlyByCode(items, modularContent, letterCode);
+      }
+
+      if (!singleTemplate) {
+        return NextResponse.json(
+          {
+            error:
+              `No linked letter_template was resolved for single-template letter code ${letterCode.toUpperCase()}.`,
+          },
+          { status: 404 }
+        );
+      }
+
+      const content = extractContent(singleTemplate, items, modularContent);
       return NextResponse.json(
         {
           ...content,
@@ -1344,6 +1521,10 @@ export async function GET(request: Request) {
 
     if (!resolvedTemplate && !matchedLetterTypeItem && !rule?.disableCrossLetterTypeFallback) {
       resolvedTemplate = resolveTemplateByCodeAcrossLetterTypes(items, modularContent, letterCode);
+    }
+
+    if (!resolvedTemplate) {
+      resolvedTemplate = resolveTemplateDirectlyByCode(items, modularContent, letterCode);
     }
 
     if (!resolvedTemplate) {

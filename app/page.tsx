@@ -562,11 +562,13 @@ export default function Home() {
   const [letterCodeFilter, setLetterCodeFilter] = useState("");
   const [cmsLoading, setCmsLoading] = useState(false);
   const [cmsErrorMessage, setCmsErrorMessage] = useState<string | null>(null);
+  const [cmsNoticeMessage, setCmsNoticeMessage] = useState<string | null>(null);
   const [cmsNotConfigured, setCmsNotConfigured] = useState(false);
   const [showResolvedCmsValues, setShowResolvedCmsValues] = useState(true);
-  const [highlightCmsPlaceholders, setHighlightCmsPlaceholders] = useState(true);
+  const [highlightCmsPlaceholders, setHighlightCmsPlaceholders] = useState(false);
   // Toggle to switch between draft (preview API) and published (delivery API) content.
   const [usePreviewContent, setUsePreviewContent] = useState(true);
+  const [comparePublishedToDraft, setComparePublishedToDraft] = useState(false);
   const [draftContent, setDraftContent] = useState<CmsVersionState>({
     title: "",
     html: "",
@@ -673,6 +675,10 @@ export default function Home() {
       setErrorMessage(null);
       setRecords([]);
       setSelectedFileName("");
+      setShowResolvedCmsValues(true);
+      setHighlightCmsPlaceholders(false);
+      setUsePreviewContent(true);
+      setComparePublishedToDraft(false);
       return;
     }
 
@@ -683,6 +689,11 @@ export default function Home() {
     setRecords([]);
     setCurrentIndex(0);
     setLetterCodeFilter("");
+    // Reset UI toggles to the default XML view whenever a new XML is loaded.
+    setShowResolvedCmsValues(true);
+    setHighlightCmsPlaceholders(false);
+    setUsePreviewContent(true);
+    setComparePublishedToDraft(false);
 
     try {
       const xmlText = await file.text();
@@ -906,20 +917,25 @@ export default function Home() {
   }, [publishedContent.html, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 
   const highlightedCmsHtml = useMemo(() => {
-    // Use the current toggle selection as the active view and highlight only text added in that selected version.
-    if (usePreviewContent) {
+    // Compare mode highlights only changed Draft text against Published baseline.
+    if (usePreviewContent && comparePublishedToDraft) {
       return highlightAddedRichText(resolvedPublishedHtml, resolvedDraftHtml);
     }
 
-    // In Published mode, render published content without green diff highlights.
+    if (usePreviewContent) {
+      return resolvedDraftHtml;
+    }
+
+    // Published mode renders published content without Draft comparison highlights.
     return resolvedPublishedHtml;
-  }, [usePreviewContent, resolvedDraftHtml, resolvedPublishedHtml]);
+  }, [usePreviewContent, comparePublishedToDraft, resolvedDraftHtml, resolvedPublishedHtml]);
 
   useEffect(() => {
     const loadCmsContent = async () => {
       if (!currentLetterCode) {
         setCmsLoading(false);
         setCmsErrorMessage(null);
+        setCmsNoticeMessage(null);
         setCmsNotConfigured(false);
         setDraftContent({ title: "", html: "", raw: null, brandPartner: null });
         setPublishedContent({ title: "", html: "", raw: null, brandPartner: null });
@@ -928,6 +944,7 @@ export default function Home() {
 
       setCmsLoading(true);
       setCmsErrorMessage(null);
+      setCmsNoticeMessage(null);
       setCmsNotConfigured(false);
       setDraftContent({ title: "", html: "", raw: null, brandPartner: null });
       setPublishedContent({ title: "", html: "", raw: null, brandPartner: null });
@@ -990,10 +1007,11 @@ export default function Home() {
           };
 
           if (!response.ok) {
-            if (response.status === 404) {
-              setCmsNotConfigured(true);
-            }
-            throw new Error(payload.error || `Unable to load CMS content (${response.status}).`);
+            const modeError = new Error(payload.error || `Unable to load CMS content (${response.status}).`) as Error & {
+              status?: number;
+            };
+            modeError.status = response.status;
+            throw modeError;
           }
 
           return {
@@ -1004,13 +1022,46 @@ export default function Home() {
           };
         };
 
-        const [draftVersion, publishedVersion] = await Promise.all([
+        const [draftResult, publishedResult] = await Promise.allSettled([
           fetchByMode(true),
           fetchByMode(false),
         ]);
 
-        setDraftContent(draftVersion);
-        setPublishedContent(publishedVersion);
+        if (draftResult.status === "fulfilled") {
+          setDraftContent(draftResult.value);
+        }
+
+        if (publishedResult.status === "fulfilled") {
+          setPublishedContent(publishedResult.value);
+        }
+
+        if (draftResult.status === "rejected" && publishedResult.status === "rejected") {
+          const draftStatus =
+            draftResult.reason && typeof draftResult.reason === "object" && "status" in draftResult.reason
+              ? Number((draftResult.reason as { status?: unknown }).status)
+              : undefined;
+          const publishedStatus =
+            publishedResult.reason && typeof publishedResult.reason === "object" && "status" in publishedResult.reason
+              ? Number((publishedResult.reason as { status?: unknown }).status)
+              : undefined;
+
+          setCmsNotConfigured(draftStatus === 404 && publishedStatus === 404);
+          setCmsErrorMessage(
+            [
+              draftResult.reason instanceof Error ? `Draft: ${draftResult.reason.message}` : "Draft fetch failed.",
+              publishedResult.reason instanceof Error ? `Published: ${publishedResult.reason.message}` : "Published fetch failed.",
+            ].join(" ")
+          );
+          return;
+        }
+
+        if (draftResult.status === "rejected" || publishedResult.status === "rejected") {
+          setCmsNotConfigured(false);
+          const partialMessage = draftResult.status === "rejected"
+            ? "Draft content unavailable; showing published content."
+            : "Published content unavailable; showing draft content without cross-version comparison.";
+          setCmsNoticeMessage(partialMessage);
+        }
       } catch (error) {
         const message =
           error instanceof Error
@@ -1156,6 +1207,26 @@ export default function Home() {
             </select>
           </div>
 
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              marginBottom: "0.85rem",
+              marginLeft: "1rem",
+              fontSize: "0.9rem",
+              color: cmsFrameMutedTextColor,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={comparePublishedToDraft}
+              onChange={(event) => setComparePublishedToDraft(event.target.checked)}
+              disabled={!usePreviewContent}
+            />
+            Compare Published -&gt; Draft
+          </label>
+
           {!currentLetterCode && (
             <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>
               Load XML and select a record to render its letter content from Kontent.ai.
@@ -1184,9 +1255,11 @@ export default function Home() {
                 fontSize: "0.85rem",
               }}
             >
-              {usePreviewContent
-                    ? "Comparing Published -> Draft. Only changed Draft text is highlighted in green."
-                : "Published view: highlights are disabled."}
+              {usePreviewContent && comparePublishedToDraft
+                ? "Comparing Published -> Draft. Only changed Draft text is highlighted in green."
+                : usePreviewContent
+                  ? "Draft view without Published comparison highlighting."
+                  : "Published view: highlights are disabled."}
             </p>
           )}
 
@@ -1196,6 +1269,12 @@ export default function Home() {
 
           {cmsErrorMessage && (
             <p style={{ margin: 0, color: cmsFrameErrorColor }}>Error: {cmsErrorMessage}</p>
+          )}
+
+          {cmsNoticeMessage && !cmsErrorMessage && (
+            <p style={{ marginTop: "0.5rem", marginBottom: 0, color: cmsFrameMutedTextColor }}>
+              {cmsNoticeMessage}
+            </p>
           )}
 
           {!cmsLoading && cmsNotConfigured && currentLetterCode && (
