@@ -886,6 +886,19 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "CXPremiumDueDate")
     : "";
 
+  const taskSubcategoryCode = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "TaskSubcategoryCode")
+    : "";
+
+  const upmTrigger = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "UPMTriger") ||
+      findFirstStringValueByKey(filteredRecord, "UPMTrigger")
+    : "";
+
+  const idrDelayReason = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "IDRDelayReason")
+    : "";
+
   const activeContent = useMemo(() => {
     return usePreviewContent ? draftContent : publishedContent;
   }, [usePreviewContent, draftContent, publishedContent]);
@@ -981,6 +994,18 @@ export default function Home() {
 
           if (cxPremiumDueDate) {
             params.set("cxPremiumDueDate", cxPremiumDueDate);
+          }
+
+          if (taskSubcategoryCode) {
+            params.set("taskSubcategoryCode", taskSubcategoryCode);
+          }
+
+          if (upmTrigger) {
+            params.set("upmTrigger", upmTrigger);
+          }
+
+          if (idrDelayReason) {
+            params.set("idrDelayReason", idrDelayReason);
           }
 
           return params;
@@ -1083,6 +1108,9 @@ export default function Home() {
     cancellationReason,
     cancelWithCoolingPeriod,
     cxPremiumDueDate,
+    taskSubcategoryCode,
+    upmTrigger,
+    idrDelayReason,
   ]);
 
   const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;

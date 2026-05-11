@@ -41,6 +41,13 @@ type CancelConfig = {
   cxPremiumDueDateParam: string;
 };
 
+type ComplaintConfig = {
+  letterCode: string;
+  taskSubcategoryCodeParam: string;
+  upmTriggerParam: string;
+  idrDelayReasonParam: string;
+};
+
 type CoiConfig = {
   letterCode: string;
   requiredSpaceCodename: string;
@@ -89,6 +96,13 @@ const CANCEL_CONFIG: CancelConfig = {
   cancelWithCoolingPeriodParam: "cancelWithCoolingPeriod",
   cancelWithinCoolingPeriodParam: "cancelWithinCoolingPeriod",
   cxPremiumDueDateParam: "cxPremiumDueDate",
+};
+
+const COMPLAINT_CONFIG: ComplaintConfig = {
+  letterCode: "COMPLAINT",
+  taskSubcategoryCodeParam: "taskSubcategoryCode",
+  upmTriggerParam: "upmTrigger",
+  idrDelayReasonParam: "idrDelayReason",
 };
 
 const COI_CONFIG: CoiConfig = {
@@ -1168,6 +1182,118 @@ function resolveCancelTemplate(
   };
 }
 
+function resolveComplaintTemplate(
+  letterTypeItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  taskSubcategoryCode: string,
+  upmTrigger: string,
+  idrDelayReason: string
+): { template: KontentItem | null; expectedTemplateCode?: string; error?: string; status?: number } {
+  if (!taskSubcategoryCode.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'taskSubcategoryCode' for letter code COMPLAINT.",
+      status: 400,
+    };
+  }
+
+  if (!upmTrigger.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'upmTrigger' for letter code COMPLAINT.",
+      status: 400,
+    };
+  }
+
+  const normalizedTaskSubcategoryCode = normalizeCode(taskSubcategoryCode);
+  const normalizedTrigger = normalizeCodeKey(upmTrigger);
+  const isCstComplaint =
+    normalizedTaskSubcategoryCode === "SCAT0314" ||
+    normalizedTaskSubcategoryCode === "SCAT0117";
+  const templatePrefix = isCstComplaint ? "CST" : "IDR";
+
+  let expectedTemplateCode = "";
+
+  if (normalizedTrigger === "FOLLOWUP") {
+    expectedTemplateCode = `${templatePrefix}_FOLLOWUP`;
+  } else if (normalizedTrigger === "DELAYED") {
+    if (!idrDelayReason.trim()) {
+      return {
+        template: null,
+        error:
+          "Missing required selector value 'idrDelayReason' for COMPLAINT letters when upmTrigger is DELAYED.",
+        status: 400,
+      };
+    }
+
+    const normalizedDelayReason = normalizeCodeKey(idrDelayReason);
+    const delayReasonToSuffix: Record<string, string> = {
+      COMPLAINTNONRESPONSE: "COMPLAINT",
+      COMPLEXCASE: "COMPLEX",
+      HIGHCOMPLAINTVOLUMES: "HIGH",
+      INFORMATIONREQUIREDFROMTHIRDPARTY: "INFORMATION",
+    };
+
+    const suffix = delayReasonToSuffix[normalizedDelayReason] || "";
+    if (!suffix) {
+      return {
+        template: null,
+        error: `No COMPLAINT template mapping found for IDRDelayReason '${idrDelayReason}'.`,
+        status: 404,
+      };
+    }
+
+    expectedTemplateCode = `${templatePrefix}_${suffix}`;
+  } else {
+    return {
+      template: null,
+      error:
+        `No COMPLAINT template mapping found for UPMTrigger '${upmTrigger}'. ` +
+        "Expected UPMTrigger to be FOLLOWUP or DELAYED.",
+      status: 404,
+    };
+  }
+
+  const linkedTemplateCodenames = letterTypeItem
+    ? readLinkedTemplateCodenames(letterTypeItem.elements ?? {})
+    : [];
+
+  for (const codename of linkedTemplateCodenames) {
+    if (!matchesSelectorValueToCodename(expectedTemplateCode, codename)) {
+      continue;
+    }
+
+    const template = readTemplateByCodename(codename, allItems, modularContent);
+    if (template) {
+      return { template, expectedTemplateCode };
+    }
+  }
+
+  const allTemplateItems = [
+    ...Object.values(modularContent).filter((item) => item.system?.type === "letter_template"),
+    ...allItems.filter((item) => item.system?.type === "letter_template"),
+  ];
+
+  const fallbackTemplate = allTemplateItems.find((item) => {
+    const codename = readTextValue(item.system?.codename);
+    return codename.length > 0 && matchesSelectorValueToCodename(expectedTemplateCode, codename);
+  });
+
+  if (fallbackTemplate) {
+    return { template: fallbackTemplate, expectedTemplateCode };
+  }
+
+  return {
+    template: null,
+    expectedTemplateCode,
+    error:
+      `No COMPLAINT letter_template matched '${expectedTemplateCode}'. ` +
+      "Expected a letter_template codename matching the configured COMPLAINT logic.",
+    status: 404,
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const letterCode = searchParams.get("letterCode");
@@ -1464,6 +1590,43 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(cancelResult.template, items, modularContent);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === COMPLAINT_CONFIG.letterCode) {
+      const taskSubcategoryCode =
+        searchParams.get(COMPLAINT_CONFIG.taskSubcategoryCodeParam) || "";
+      const upmTrigger = searchParams.get(COMPLAINT_CONFIG.upmTriggerParam) || "";
+      const idrDelayReason =
+        searchParams.get(COMPLAINT_CONFIG.idrDelayReasonParam) || "";
+
+      const complaintLetterType = findMatchingLetterTypeItem(items, letterCode);
+
+      const complaintResult = resolveComplaintTemplate(
+        complaintLetterType,
+        items,
+        modularContent,
+        taskSubcategoryCode,
+        upmTrigger,
+        idrDelayReason
+      );
+
+      if (!complaintResult.template) {
+        return NextResponse.json(
+          {
+            error: complaintResult.error || "Unable to resolve COMPLAINT template.",
+          },
+          { status: complaintResult.status || 404 }
+        );
+      }
+
+      const content = extractContent(complaintResult.template, items, modularContent);
       return NextResponse.json(
         {
           ...content,
