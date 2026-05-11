@@ -9,6 +9,20 @@ type XmlObject = {
   [key: string]: XmlValue;
 };
 
+type CmsVersionState = {
+  title: string;
+  html: string;
+  raw: unknown | null;
+  brandPartner: {
+    name?: string;
+    codename?: string;
+    partnerName?: string;
+    logoUrl?: string;
+    primaryColorHex?: string;
+    disclaimer?: string;
+  } | null;
+};
+
 const RAW_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}/g;
 const ENCODED_PLACEHOLDER_PATTERN = /&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;/g;
 const URL_ENCODED_PLACEHOLDER_PATTERN = /%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
@@ -357,6 +371,186 @@ function readFirstStringFromValue(value: unknown): string {
   return "";
 }
 
+const WHOLE_PLACEHOLDER_PATTERN = new RegExp(`^(${ANY_PLACEHOLDER_PATTERN.source})$`, "i");
+
+function isWholePlaceholderToken(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return WHOLE_PLACEHOLDER_PATTERN.test(trimmed);
+}
+
+type TokenPiece = {
+  raw: string;
+  comparable: boolean;
+  normalized: string;
+};
+
+function normalizeComparableToken(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "");
+}
+
+function tokenizeTextPieces(value: string): TokenPiece[] {
+  const chunks = value.split(/(\s+)/);
+
+  return chunks.map((chunk) => {
+    if (!chunk || /^\s+$/.test(chunk)) {
+      return {
+        raw: chunk,
+        comparable: false,
+        normalized: "",
+      };
+    }
+
+    if (isWholePlaceholderToken(chunk)) {
+      return {
+        raw: chunk,
+        comparable: false,
+        normalized: "",
+      };
+    }
+
+    const normalized = normalizeComparableToken(chunk);
+    return {
+      raw: chunk,
+      comparable: normalized.length > 0,
+      normalized,
+    };
+  });
+}
+
+function computeCurrentLcsIndexes(currentTokens: string[], previousTokens: string[]): Set<number> {
+  const rowCount = currentTokens.length;
+  const colCount = previousTokens.length;
+
+  if (rowCount === 0 || colCount === 0) {
+    return new Set<number>();
+  }
+
+  const matrix: number[][] = Array.from({ length: rowCount + 1 }, () => Array(colCount + 1).fill(0));
+
+  for (let row = 1; row <= rowCount; row += 1) {
+    for (let col = 1; col <= colCount; col += 1) {
+      if (currentTokens[row - 1] === previousTokens[col - 1]) {
+        matrix[row][col] = matrix[row - 1][col - 1] + 1;
+      } else {
+        matrix[row][col] = Math.max(matrix[row - 1][col], matrix[row][col - 1]);
+      }
+    }
+  }
+
+  const matchedIndexes = new Set<number>();
+  let row = rowCount;
+  let col = colCount;
+
+  while (row > 0 && col > 0) {
+    if (currentTokens[row - 1] === previousTokens[col - 1]) {
+      matchedIndexes.add(row - 1);
+      row -= 1;
+      col -= 1;
+      continue;
+    }
+
+    if (matrix[row - 1][col] >= matrix[row][col - 1]) {
+      row -= 1;
+    } else {
+      col -= 1;
+    }
+  }
+
+  return matchedIndexes;
+}
+
+function highlightAddedRichText(previousHtml: string, currentHtml: string): string {
+  if (!currentHtml) {
+    return "";
+  }
+
+  if (typeof DOMParser === "undefined" || typeof document === "undefined") {
+    return currentHtml;
+  }
+
+  const previousDoc = new DOMParser().parseFromString(previousHtml || "", "text/html");
+  const currentDoc = new DOMParser().parseFromString(currentHtml, "text/html");
+
+  const collectTextNodes = (docValue: Document): Text[] => {
+    const walker = docValue.createTreeWalker(docValue.body, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode as Text;
+      const parentElement = textNode.parentElement;
+
+      if (!parentElement) {
+        continue;
+      }
+
+      if (parentElement.closest("script,style,.cms-placeholder-highlight")) {
+        continue;
+      }
+
+      nodes.push(textNode);
+    }
+
+    return nodes;
+  };
+
+  const previousNodes = collectTextNodes(previousDoc);
+  const currentNodes = collectTextNodes(currentDoc);
+
+  const previousComparableTokens = previousNodes
+    .flatMap((node) => tokenizeTextPieces(node.nodeValue || ""))
+    .filter((piece) => piece.comparable)
+    .map((piece) => piece.normalized);
+
+  const currentTokenPiecesByNode = currentNodes.map((node) => tokenizeTextPieces(node.nodeValue || ""));
+  const currentComparableTokens = currentTokenPiecesByNode
+    .flat()
+    .filter((piece) => piece.comparable)
+    .map((piece) => piece.normalized);
+
+  const lcsMatchedCurrentIndexes = computeCurrentLcsIndexes(currentComparableTokens, previousComparableTokens);
+  let comparableTokenCursor = 0;
+
+  currentNodes.forEach((currentNode, nodeIndex) => {
+    const tokenPieces = currentTokenPiecesByNode[nodeIndex];
+
+    const fragment = currentDoc.createDocumentFragment();
+    let hasHighlight = false;
+
+    for (const piece of tokenPieces) {
+      if (!piece.comparable) {
+        fragment.appendChild(currentDoc.createTextNode(piece.raw));
+        continue;
+      }
+
+      const isUnchanged = lcsMatchedCurrentIndexes.has(comparableTokenCursor);
+      comparableTokenCursor += 1;
+
+      if (isUnchanged) {
+        fragment.appendChild(currentDoc.createTextNode(piece.raw));
+        continue;
+      }
+
+      const span = currentDoc.createElement("span");
+      span.className = "cms-diff-added";
+      span.textContent = piece.raw;
+      fragment.appendChild(span);
+      hasHighlight = true;
+    }
+
+    if (hasHighlight) {
+      currentNode.parentNode?.replaceChild(fragment, currentNode);
+    }
+  });
+
+  return currentDoc.body.innerHTML;
+}
+
 export default function Home() {
   const fallbackLogoSrc = "/next.svg";
 
@@ -373,17 +567,18 @@ export default function Home() {
   const [highlightCmsPlaceholders, setHighlightCmsPlaceholders] = useState(true);
   // Toggle to switch between draft (preview API) and published (delivery API) content.
   const [usePreviewContent, setUsePreviewContent] = useState(true);
-  const [cmsTitle, setCmsTitle] = useState("");
-  const [cmsHtml, setCmsHtml] = useState("");
-  const [cmsRaw, setCmsRaw] = useState<unknown | null>(null);
-  const [cmsBrandPartner, setCmsBrandPartner] = useState<{
-    name?: string;
-    codename?: string;
-    partnerName?: string;
-    logoUrl?: string;
-    primaryColorHex?: string;
-    disclaimer?: string;
-  } | null>(null);
+  const [draftContent, setDraftContent] = useState<CmsVersionState>({
+    title: "",
+    html: "",
+    raw: null,
+    brandPartner: null,
+  });
+  const [publishedContent, setPublishedContent] = useState<CmsVersionState>({
+    title: "",
+    html: "",
+    raw: null,
+    brandPartner: null,
+  });
   const [selectedFileName, setSelectedFileName] = useState<string>("");
 
   // Convert an XML element recursively into a plain JavaScript object.
@@ -680,13 +875,45 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "CXPremiumDueDate")
     : "";
 
-  const resolvedCmsHtml = useMemo(() => {
-    if (!cmsHtml) {
-      return cmsHtml;
+  const activeContent = useMemo(() => {
+    return usePreviewContent ? draftContent : publishedContent;
+  }, [usePreviewContent, draftContent, publishedContent]);
+
+  const resolvedDraftHtml = useMemo(() => {
+    if (!draftContent.html) {
+      return "";
     }
 
-    return replaceCmsPlaceholders(cmsHtml, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders);
-  }, [cmsHtml, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
+    return replaceCmsPlaceholders(
+      draftContent.html,
+      filteredRecord,
+      showResolvedCmsValues,
+      highlightCmsPlaceholders
+    );
+  }, [draftContent.html, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
+
+  const resolvedPublishedHtml = useMemo(() => {
+    if (!publishedContent.html) {
+      return "";
+    }
+
+    return replaceCmsPlaceholders(
+      publishedContent.html,
+      filteredRecord,
+      showResolvedCmsValues,
+      highlightCmsPlaceholders
+    );
+  }, [publishedContent.html, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
+
+  const highlightedCmsHtml = useMemo(() => {
+    // Use the current toggle selection as the active view and highlight only text added in that selected version.
+    if (usePreviewContent) {
+      return highlightAddedRichText(resolvedPublishedHtml, resolvedDraftHtml);
+    }
+
+    // In Published mode, render published content without green diff highlights.
+    return resolvedPublishedHtml;
+  }, [usePreviewContent, resolvedDraftHtml, resolvedPublishedHtml]);
 
   useEffect(() => {
     const loadCmsContent = async () => {
@@ -694,85 +921,96 @@ export default function Home() {
         setCmsLoading(false);
         setCmsErrorMessage(null);
         setCmsNotConfigured(false);
-        setCmsTitle("");
-        setCmsHtml("");
-        setCmsRaw(null);
-        setCmsBrandPartner(null);
+        setDraftContent({ title: "", html: "", raw: null, brandPartner: null });
+        setPublishedContent({ title: "", html: "", raw: null, brandPartner: null });
         return;
       }
 
       setCmsLoading(true);
       setCmsErrorMessage(null);
       setCmsNotConfigured(false);
-      setCmsTitle("");
-      setCmsHtml("");
-      setCmsRaw(null);
-      setCmsBrandPartner(null);
+      setDraftContent({ title: "", html: "", raw: null, brandPartner: null });
+      setPublishedContent({ title: "", html: "", raw: null, brandPartner: null });
 
       try {
-        const queryParams = new URLSearchParams({
-          letterCode: currentLetterCode,
-        });
+        const buildBaseParams = () => {
+          const params = new URLSearchParams({
+            letterCode: currentLetterCode,
+          });
 
-        if (waiverOutcome) {
-          queryParams.set("waiverOutcome", waiverOutcome);
-        }
+          if (waiverOutcome) {
+            params.set("waiverOutcome", waiverOutcome);
+          }
 
-        if (partnerName) {
-          queryParams.set("partnerName", partnerName);
-        }
+          if (partnerName) {
+            params.set("partnerName", partnerName);
+          }
 
-        if (underwriter) {
-          queryParams.set("underwriter", underwriter);
-        }
+          if (underwriter) {
+            params.set("underwriter", underwriter);
+          }
 
-        if (autoRenewal) {
-          queryParams.set("autoRenewal", autoRenewal);
-        }
+          if (autoRenewal) {
+            params.set("autoRenewal", autoRenewal);
+          }
 
-        if (cancellationReason) {
-          queryParams.set("cancellationReason", cancellationReason);
-        }
+          if (cancellationReason) {
+            params.set("cancellationReason", cancellationReason);
+          }
 
-        if (cancelWithCoolingPeriod) {
-          queryParams.set("cancelWithCoolingPeriod", cancelWithCoolingPeriod);
-        }
+          if (cancelWithCoolingPeriod) {
+            params.set("cancelWithCoolingPeriod", cancelWithCoolingPeriod);
+          }
 
-        if (cxPremiumDueDate) {
-          queryParams.set("cxPremiumDueDate", cxPremiumDueDate);
-        }
+          if (cxPremiumDueDate) {
+            params.set("cxPremiumDueDate", cxPremiumDueDate);
+          }
 
-        // Pass content mode preference to API.
-        queryParams.set("usePreview", usePreviewContent ? "true" : "false");
-
-        const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
-
-        const payload = (await response.json()) as {
-          error?: string;
-          title?: string;
-          html?: string;
-          raw?: unknown;
-          brandPartner?: {
-            name?: string;
-            codename?: string;
-            partnerName?: string;
-            logoUrl?: string;
-            primaryColorHex?: string;
-            disclaimer?: string;
-          } | null;
+          return params;
         };
 
-        if (!response.ok) {
-          if (response.status === 404) {
-            setCmsNotConfigured(true);
-          }
-          throw new Error(payload.error || `Unable to load CMS content (${response.status}).`);
-        }
+        const fetchByMode = async (isPreview: boolean): Promise<CmsVersionState> => {
+          const queryParams = buildBaseParams();
+          queryParams.set("usePreview", isPreview ? "true" : "false");
 
-        setCmsTitle(payload.title || currentLetterCode);
-        setCmsHtml(payload.html || "");
-        setCmsRaw(payload.raw ?? null);
-        setCmsBrandPartner(payload.brandPartner ?? null);
+          const response = await fetch(`/api/kontent-letter?${queryParams.toString()}`);
+          const payload = (await response.json()) as {
+            error?: string;
+            title?: string;
+            html?: string;
+            raw?: unknown;
+            brandPartner?: {
+              name?: string;
+              codename?: string;
+              partnerName?: string;
+              logoUrl?: string;
+              primaryColorHex?: string;
+              disclaimer?: string;
+            } | null;
+          };
+
+          if (!response.ok) {
+            if (response.status === 404) {
+              setCmsNotConfigured(true);
+            }
+            throw new Error(payload.error || `Unable to load CMS content (${response.status}).`);
+          }
+
+          return {
+            title: payload.title || currentLetterCode,
+            html: payload.html || "",
+            raw: payload.raw ?? null,
+            brandPartner: payload.brandPartner ?? null,
+          };
+        };
+
+        const [draftVersion, publishedVersion] = await Promise.all([
+          fetchByMode(true),
+          fetchByMode(false),
+        ]);
+
+        setDraftContent(draftVersion);
+        setPublishedContent(publishedVersion);
       } catch (error) {
         const message =
           error instanceof Error
@@ -794,12 +1032,11 @@ export default function Home() {
     cancellationReason,
     cancelWithCoolingPeriod,
     cxPremiumDueDate,
-    usePreviewContent,
   ]);
 
-  const cmsLetterLogoSrc = cmsBrandPartner?.logoUrl || fallbackLogoSrc;
-  const cmsLetterLogoAlt = cmsBrandPartner?.partnerName || "Brand Partner Logo";
-  const cmsBrandColor = normalizeHexColor(cmsBrandPartner?.primaryColorHex) || "#e5e7eb";
+  const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;
+  const cmsLetterLogoAlt = activeContent.brandPartner?.partnerName || "Brand Partner Logo";
+  const cmsBrandColor = normalizeHexColor(activeContent.brandPartner?.primaryColorHex) || "#e5e7eb";
   const cmsLetterLayerBackground = cmsBrandColor;
   const cmsFrameTextColor = getContrastTextColor(cmsBrandColor);
   const cmsFrameMutedTextColor = cmsFrameTextColor === "#ffffff" ? "#f3f4f6" : "#374151";
@@ -938,6 +1175,21 @@ export default function Home() {
             </p>
           )}
 
+          {currentLetterCode && !cmsLoading && !cmsErrorMessage && (
+            <p
+              style={{
+                marginTop: 0,
+                marginBottom: "0.75rem",
+                color: cmsFrameMutedTextColor,
+                fontSize: "0.85rem",
+              }}
+            >
+              {usePreviewContent
+                    ? "Comparing Published -> Draft. Only changed Draft text is highlighted in green."
+                : "Published view: highlights are disabled."}
+            </p>
+          )}
+
           {cmsLoading && (
             <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>Loading CMS content...</p>
           )}
@@ -954,11 +1206,11 @@ export default function Home() {
             </p>
           )}
 
-          {!cmsLoading && !cmsErrorMessage && cmsTitle && (
-            <h3 style={{ marginTop: 0, marginBottom: "0.5rem", fontSize: "1rem" }}>{cmsTitle}</h3>
+          {!cmsLoading && !cmsErrorMessage && activeContent.title && (
+            <h3 style={{ marginTop: 0, marginBottom: "0.5rem", fontSize: "1rem" }}>{activeContent.title}</h3>
           )}
 
-          {!cmsLoading && !cmsErrorMessage && resolvedCmsHtml && (
+          {!cmsLoading && !cmsErrorMessage && highlightedCmsHtml && (
             <section
               style={{
                 border: "1px solid #e5e5e5",
@@ -980,10 +1232,10 @@ export default function Home() {
 
               <div
                 className="cms-rich-text"
-                dangerouslySetInnerHTML={{ __html: resolvedCmsHtml }}
+                dangerouslySetInnerHTML={{ __html: highlightedCmsHtml }}
               />
 
-              {cmsBrandPartner?.disclaimer && (
+              {activeContent.brandPartner?.disclaimer && (
                 <div
                   style={{
                     marginTop: "2.5rem",
@@ -1000,14 +1252,14 @@ export default function Home() {
                   <div
                     className="cms-rich-text"
                     style={{ fontSize: "0.9rem" }}
-                    dangerouslySetInnerHTML={{ __html: cmsBrandPartner.disclaimer }}
+                    dangerouslySetInnerHTML={{ __html: activeContent.brandPartner.disclaimer }}
                   />
                 </div>
               )}
             </section>
           )}
 
-          {!cmsLoading && !cmsErrorMessage && !cmsHtml && cmsRaw !== null && (
+          {!cmsLoading && !cmsErrorMessage && !activeContent.html && activeContent.raw !== null && (
             <pre
               style={{
                 margin: 0,
@@ -1019,7 +1271,7 @@ export default function Home() {
                 fontSize: "0.85rem",
               }}
             >
-              {JSON.stringify(cmsRaw, null, 2)}
+              {JSON.stringify(activeContent.raw, null, 2)}
             </pre>
           )}
         </article>

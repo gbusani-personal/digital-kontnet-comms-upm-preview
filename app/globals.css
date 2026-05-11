@@ -209,3 +209,10 @@ body {
   padding: 0.02rem 0.15rem;
   /* Preserve CMS text styling: bold, italic, colors, etc. */
 }
+
+.cms-rich-text .cms-diff-added {
+  background: #bbf7d0;
+  color: #14532d;
+  border-radius: 3px;
+  padding: 0.02rem 0.15rem;
+}
