@@ -977,7 +977,7 @@ export default function Home() {
         return;
       }
 
-      if (currentLetterCode !== "COI") {
+      if (currentLetterCode !== "COI" && currentLetterCode !== "RENEWAL") {
         setOtherAssetsOptions([]);
         setSelectedOtherAssetsCodename("");
       }
@@ -992,7 +992,7 @@ export default function Home() {
       const isRecordChange = recordKey !== coiRecordKeyRef.current;
       coiRecordKeyRef.current = recordKey;
       // On record navigation clear stale Other Assets state immediately.
-      if (isRecordChange && currentLetterCode === "COI") {
+      if (isRecordChange && (currentLetterCode === "COI" || currentLetterCode === "RENEWAL")) {
         setOtherAssetsOptions([]);
         setSelectedOtherAssetsCodename("");
       }
@@ -1059,7 +1059,7 @@ export default function Home() {
             params.set("letterReasonCode", renewalLetterReasonCode);
           }
 
-          if (currentLetterCode === "COI" && effectiveOtherAssetsCodename) {
+          if ((currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && effectiveOtherAssetsCodename) {
             params.set("otherAssetsCodename", effectiveOtherAssetsCodename);
           }
 
@@ -1127,7 +1127,7 @@ export default function Home() {
 
         if (draftResult.status === "fulfilled") {
           setDraftContent(draftResult.value);
-          if (currentLetterCode === "COI") {
+          if (currentLetterCode === "COI" || currentLetterCode === "RENEWAL") {
             setOtherAssetsOptions(draftResult.value.otherAssetsOptions ?? []);
             setSelectedOtherAssetsCodename(
               draftResult.value.selectedOtherAssetsCodename ?? ""
@@ -1356,7 +1356,7 @@ export default function Home() {
             </p>
           )}
 
-          {currentLetterCode === "COI" && !cmsLoading && otherAssetsOptions.length > 0 && (
+          {(currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && !cmsLoading && otherAssetsOptions.length > 0 && (
             <div
               style={{
                 display: "inline-flex",

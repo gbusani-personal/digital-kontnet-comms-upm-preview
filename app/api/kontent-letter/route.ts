@@ -848,7 +848,7 @@ function resolveRenewalTemplate(
   modularContent: Record<string, KontentItem>,
   letterType: string,
   letterReasonCode: string
-): { template: KontentItem | null; expectedTemplateName?: string; error?: string; status?: number } {
+): { template: KontentItem | null; matchedLetterType?: KontentItem | null; expectedTemplateName?: string; error?: string; status?: number } {
   if (!letterType.trim()) {
     return {
       template: null,
@@ -942,7 +942,7 @@ function resolveRenewalTemplate(
       );
 
       if (isMatch) {
-        return { template, expectedTemplateName };
+        return { template, matchedLetterType: partnerLetterType, expectedTemplateName };
       }
     }
   }
@@ -962,11 +962,12 @@ function resolveRenewalTemplate(
   });
 
   if (fallbackTemplate) {
-    return { template: fallbackTemplate, expectedTemplateName };
+    return { template: fallbackTemplate, matchedLetterType: partnerLetterTypes[0] ?? null, expectedTemplateName };
   }
 
   return {
     template: null,
+    matchedLetterType: null,
     expectedTemplateName,
     error:
       `No RENEWAL letter_template matched '${expectedTemplateName}' in the partner-matched letter_type links.`,
@@ -1997,8 +1998,145 @@ export async function GET(request: Request) {
         );
       }
 
+      const renewalTemplate = renewalResult.template;
+      const matchedRenewalLetterTypeItem = renewalResult.matchedLetterType ?? null;
+      const renewalDefaultCodename = readTextValue(renewalTemplate.system?.codename);
+      const requestedOtherAssetsCodename = searchParams.get("otherAssetsCodename") || "";
+
+      const renewalLinkedCodenames = matchedRenewalLetterTypeItem
+        ? readLinkedTemplateCodenames(matchedRenewalLetterTypeItem.elements ?? {})
+        : [];
+
+      const renewalBusinessTemplateNames = [
+        "AUTO RENEWAL",
+        "AUTO RENEWAL - FORCED",
+        "RENEWAL OFFER",
+        "RENEWAL OFFER - FORCED",
+        "RENEWAL ACCEPTANCE",
+      ];
+      const renewalBusinessTemplateKeys = new Set(
+        renewalBusinessTemplateNames.flatMap((templateName) => [
+          normalizeCodeKey(templateName),
+          normalizeCodeKey(templateName.replace(/\s+/g, "")),
+          normalizeCodeKey(templateName.replace(/\s+/g, "_")),
+          normalizeCodeKey(templateName.replace(/\s+/g, "-")),
+        ])
+      );
+
+      const readRenewalTemplateMatchCandidates = (template: KontentItem): string[] => {
+        const elements = template.elements ?? {};
+
+        return [
+          readTextValue(template.system?.name),
+          readTextValue(template.system?.codename),
+          readStringElementValue(elements.title),
+          readStringElementValue(elements.heading),
+          readStringElementValue(elements.template_name),
+          readStringElementValue(elements.letter_template_name),
+          readStringElementValue(elements.name),
+        ]
+          .map((value) => normalizeCodeKey(value))
+          .filter((value) => value.length > 0);
+      };
+
+      const isRenewalBusinessLogicTemplate = (template: KontentItem): boolean => {
+        const candidateKeys = readRenewalTemplateMatchCandidates(template);
+        return candidateKeys.some((candidate) =>
+          Array.from(renewalBusinessTemplateKeys).some(
+            (businessKey) => candidate.includes(businessKey) || businessKey.includes(candidate)
+          )
+        );
+      };
+
+      const otherAssetsOptions: OtherAssetsOption[] = [];
+      const seenCodenames = new Set<string>();
+
+      // RENEWAL should always expose the currently matched template first.
+      if (renewalDefaultCodename) {
+        otherAssetsOptions.push({
+          codename: renewalDefaultCodename,
+          name: readTemplateDisplayName(renewalTemplate),
+        });
+        seenCodenames.add(normalizeCodeKey(renewalDefaultCodename));
+      }
+
+      for (const codename of renewalLinkedCodenames) {
+        if (!codename) {
+          continue;
+        }
+
+        const normalizedCodename = normalizeCodeKey(codename);
+        if (seenCodenames.has(normalizedCodename)) {
+          continue;
+        }
+
+        const linkedTemplate = readItemByCodename(codename, combinedItems, combinedModularContent);
+        if (!linkedTemplate) {
+          continue;
+        }
+
+        if (isExcludedOtherAssetsTemplate(linkedTemplate)) {
+          continue;
+        }
+
+        if (isRenewalBusinessLogicTemplate(linkedTemplate)) {
+          continue;
+        }
+
+        const resolvedCodename = readTextValue(linkedTemplate.system?.codename) || codename;
+        otherAssetsOptions.push({
+          codename: resolvedCodename,
+          name: readTemplateDisplayName(linkedTemplate),
+        });
+        seenCodenames.add(normalizedCodename);
+      }
+
+      let selectedRenewalTemplate = renewalTemplate;
+      let selectedOtherAssetsCodename = "";
+
+      if (otherAssetsOptions.length > 0) {
+        const defaultOption = otherAssetsOptions.find(
+          (option) => normalizeCodeKey(option.codename) === normalizeCodeKey(renewalDefaultCodename)
+        );
+
+        if (defaultOption) {
+          selectedOtherAssetsCodename = defaultOption.codename;
+        } else {
+          const firstOption = otherAssetsOptions[0];
+          selectedOtherAssetsCodename = firstOption.codename;
+          const firstTemplate = readItemByCodename(
+            firstOption.codename,
+            combinedItems,
+            combinedModularContent
+          );
+          if (firstTemplate) {
+            selectedRenewalTemplate = firstTemplate;
+          }
+        }
+      }
+
+      const renewalAllowedCodenames = new Set(
+        otherAssetsOptions.map((option) => normalizeCodeKey(option.codename))
+      );
+
+      if (
+        requestedOtherAssetsCodename &&
+        renewalAllowedCodenames.has(normalizeCodeKey(requestedOtherAssetsCodename)) &&
+        normalizeCodeKey(requestedOtherAssetsCodename) !== normalizeCodeKey(selectedOtherAssetsCodename)
+      ) {
+        const overrideTemplate = readItemByCodename(
+          requestedOtherAssetsCodename,
+          combinedItems,
+          combinedModularContent
+        );
+        if (overrideTemplate) {
+          selectedRenewalTemplate = overrideTemplate;
+          selectedOtherAssetsCodename = requestedOtherAssetsCodename;
+        }
+      }
+
       const content = extractContent(
-        renewalResult.template,
+        selectedRenewalTemplate,
         combinedItems,
         combinedModularContent
       );
@@ -2007,6 +2145,8 @@ export async function GET(request: Request) {
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          otherAssetsOptions,
+          selectedOtherAssetsCodename,
         },
         { status: 200 }
       );
