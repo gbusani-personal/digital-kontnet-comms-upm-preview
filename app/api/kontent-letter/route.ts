@@ -1,4 +1,81 @@
 import { NextResponse } from "next/server";
+import https from "https";
+import { Resolver } from "dns";
+
+// Node.js 24's built-in fetch uses undici (getaddrinfo) which fails in some
+// network environments where the local router DNS does not respond to libuv
+// UDP queries. This helper uses https.Agent with a custom lookup backed by an
+// explicit DNS resolver (8.8.8.8 / 1.1.1.1) to work around that.
+
+const _dnsResolver = new Resolver();
+_dnsResolver.setServers(["8.8.8.8", "1.1.1.1"]);
+
+const _httpsAgent = new https.Agent({
+  lookup(hostname, options, callback) {
+    _dnsResolver.resolve4(hostname, (err, addrs) => {
+      if (err) {
+        callback(err as NodeJS.ErrnoException, "", 4);
+        return;
+      }
+      if ((options as { all?: boolean })?.all) {
+        (callback as (err: NodeJS.ErrnoException | null, addresses: { address: string; family: number }[]) => void)(
+          null,
+          addrs.map((a) => ({ address: a, family: 4 }))
+        );
+      } else {
+        callback(null, addrs[0], 4);
+      }
+    });
+  },
+});
+
+type ApiFetchInit = {
+  headers?: Record<string, string>;
+  cache?: string;
+};
+
+type ApiFetchResponse = {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+};
+
+function apiFetch(url: string, init?: ApiFetchInit): Promise<ApiFetchResponse> {
+  const parsed = new URL(url);
+  const requestHeaders = init?.headers ?? {};
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port ? parseInt(parsed.port, 10) : 443,
+        path: parsed.pathname + parsed.search,
+        method: "GET",
+        agent: _httpsAgent,
+        headers: requestHeaders,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          const status = res.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(JSON.parse(body) as unknown),
+            text: () => Promise.resolve(body),
+          });
+        });
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 
 type KontentElement = {
   type?: string;
@@ -494,7 +571,7 @@ async function fetchKontentItems(
   apiHost: string
 ): Promise<KontentDeliveryResponse> {
   // Primary query: constrain to letter_type content items and include linked templates.
-  const typedResponse = await fetch(
+  const typedResponse = await apiFetch(
     `${apiHost}/${projectId}/items?system.type[eq]=letter_type&depth=10&limit=200`,
     {
       cache: "no-store",
@@ -507,7 +584,7 @@ async function fetchKontentItems(
   }
 
   // Fallback query for projects/endpoints where type filter syntax differs.
-  const fallbackResponse = await fetch(
+  const fallbackResponse = await apiFetch(
     `${apiHost}/${projectId}/items?depth=10&limit=200`,
     {
       cache: "no-store",
@@ -527,7 +604,7 @@ async function fetchBrandPartnerItems(
   headers: Record<string, string>,
   apiHost: string
 ): Promise<KontentDeliveryResponse> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiHost}/${projectId}/items?system.type[eq]=brand_partner&depth=2&limit=200`,
     {
       cache: "no-store",
@@ -553,7 +630,7 @@ async function fetchCoiSpaceItem(
   // so we query by type and match locally.
   const normalizedTarget = normalizeCodeKey(requiredSpaceCodename);
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiHost}/${projectId}/items?system.type[eq]=space&limit=200`,
     {
       cache: "no-store",
@@ -583,7 +660,7 @@ async function fetchCoiSpaceItem(
   }
 
   // Final fallback: some models represent "space" with different content type names.
-  const fallbackResponse = await fetch(
+  const fallbackResponse = await apiFetch(
     `${apiHost}/${projectId}/items?limit=200`,
     {
       cache: "no-store",
@@ -623,7 +700,7 @@ async function fetchCoiLetterTypes(
   brandPartnerName: string
 ): Promise<KontentDeliveryResponse> {
   // Step 2 hierarchy query: narrow to LetterType records, then filter by item name.
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiHost}/${projectId}/items?system.type[eq]=letter_type&depth=10&limit=200`,
     {
       cache: "no-store",
