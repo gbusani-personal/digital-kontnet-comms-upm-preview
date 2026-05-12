@@ -1202,191 +1202,114 @@ export default function Home() {
   const cmsFrameTextColor = getContrastTextColor(cmsBrandColor);
   const cmsFrameMutedTextColor = cmsFrameTextColor === "#ffffff" ? "#f3f4f6" : "#374151";
   const cmsFrameErrorColor = cmsFrameTextColor === "#ffffff" ? "#fecaca" : "#b00020";
+  const cmsTemplateCanvasBackground = "#ffffff";
+  const cmsTemplateCanvasTextColor = "#1f2937";
 
   return (
-    <main
-      style={{
-        maxWidth: "1400px",
-        width: "100%",
-        margin: "0 auto",
-        padding: "2rem 1rem",
-        lineHeight: 1.5,
-      }}
-    >
-      <h1 style={{ marginBottom: "1rem", fontSize: "1.6rem" }}>Comms Live Preview from XML</h1>
+    <main className="app-shell">
+      <header className="app-hero">
+        <div>
+          <p className="app-hero__eyebrow">XML to CMS preview</p>
+          <h1 className="app-hero__title">Comms Live Preview</h1>
+          <p className="app-hero__subtitle">
+            Load XML records, browse letter types, and compare the resolved Kontent.ai output in a clean two-panel workspace.
+          </p>
+        </div>
+      </header>
 
-      <section
-        style={{
-          display: "grid",
-          gap: "1rem",
-          // Swapped panel positions: narrow column on the left, wide column on the right.
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.7fr)",
-          alignItems: "start",
-        }}
-      >
+      <section className="workspace-grid">
         <article
+          className="panel panel--brand"
           style={{
-            // CMS panel moved to the right side while keeping its original styling/behavior.
             gridColumn: "2",
-            // Keep both columns in the same first row to avoid extra top whitespace on the left.
             gridRow: "1",
-            // Prevent content sizing from forcing overlap across grid columns.
             minWidth: 0,
-            border: "1px solid #d6d6d6",
-            borderRadius: "8px",
             backgroundColor: cmsLetterLayerBackground,
             color: cmsFrameTextColor,
-            padding: "1rem",
           }}
         >
-          <h2 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1.1rem" }}>
-            CMS Letter Content
-          </h2>
-
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.45rem",
-              marginBottom: "0.85rem",
-              fontSize: "0.9rem",
-              color: cmsFrameMutedTextColor,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={showResolvedCmsValues}
-              onChange={(event) => setShowResolvedCmsValues(event.target.checked)}
-            />
-            {showResolvedCmsValues ? "Showing XML values" : "Showing placeholders"}
-          </label>
-
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.45rem",
-              marginBottom: "0.85rem",
-              fontSize: "0.9rem",
-              color: cmsFrameMutedTextColor,
-              marginLeft: "1rem",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={highlightCmsPlaceholders}
-              onChange={(event) => setHighlightCmsPlaceholders(event.target.checked)}
-            />
-            Highlight Dynamic tags
-          </label>
-
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.45rem",
-              marginBottom: "0.85rem",
-              marginLeft: "1rem",
-            }}
-          >
-            <label
-              htmlFor="content-mode-select"
-              style={{
-                fontSize: "0.9rem",
-                color: cmsFrameMutedTextColor,
-              }}
-            >
-              Content Mode:
-            </label>
-            <select
-              id="content-mode-select"
-              value={usePreviewContent ? "draft" : "published"}
-              onChange={(event) => setUsePreviewContent(event.target.value === "draft")}
-              style={{
-                fontSize: "0.9rem",
-                padding: "0.35rem 0.5rem",
-                backgroundColor: "#ffffff",
-                color: "#111111",
-                border: "1px solid #d6d6d6",
-                borderRadius: "4px",
-                cursor: "pointer",
-              }}
-            >
-              <option value="draft">Draft Content</option>
-              <option value="published">Published Content</option>
-            </select>
+          <div className="panel__header">
+            <p className="panel__eyebrow" style={{ color: cmsFrameMutedTextColor }}>
+              Rendered output
+            </p>
+            <h2 className="panel__title" style={{ color: cmsFrameTextColor }}>
+              CMS Letter Content
+            </h2>
+            <p className="panel__description" style={{ color: cmsFrameMutedTextColor }}>
+              Draft / published content, optional comparison highlighting, and record-specific Other Assets.
+            </p>
           </div>
 
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.45rem",
-              marginBottom: "0.85rem",
-              marginLeft: "1rem",
-              fontSize: "0.9rem",
-              color: cmsFrameMutedTextColor,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={comparePublishedToDraft}
-              onChange={(event) => setComparePublishedToDraft(event.target.checked)}
-              disabled={!usePreviewContent}
-            />
-            Compare Published -&gt; Draft
-          </label>
+          <div className="panel__body panel__body--compact">
+          <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showResolvedCmsValues}
+                onChange={(event) => setShowResolvedCmsValues(event.target.checked)}
+              />
+              {showResolvedCmsValues ? "Showing XML values" : "Showing placeholders"}
+            </label>
+
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={highlightCmsPlaceholders}
+                onChange={(event) => setHighlightCmsPlaceholders(event.target.checked)}
+              />
+              Highlight Dynamic tags
+            </label>
+
+            <div className="control-group" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <label htmlFor="content-mode-select" className="field__label" style={{ margin: 0 }}>
+                Content Mode:
+              </label>
+              <select
+                id="content-mode-select"
+                value={usePreviewContent ? "draft" : "published"}
+                onChange={(event) => setUsePreviewContent(event.target.value === "draft")}
+                className="select"
+              >
+                <option value="draft">Draft Content</option>
+                <option value="published">Published Content</option>
+              </select>
+            </div>
+
+            {(currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && (
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={comparePublishedToDraft}
+                  onChange={(event) => setComparePublishedToDraft(event.target.checked)}
+                  disabled={!usePreviewContent}
+                />
+                Compare Published -&gt; Draft
+              </label>
+            )}
+          </div>
 
           {!currentLetterCode && (
-            <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>
+            <p className="status" style={{ color: cmsFrameMutedTextColor }}>
               Load XML and select a record to render its letter content from Kontent.ai.
             </p>
           )}
 
           {currentLetterCode && (
-            <p
-              style={{
-                marginTop: 0,
-                marginBottom: "0.75rem",
-                color: cmsFrameMutedTextColor,
-                fontSize: "0.9rem",
-              }}
-            >
+            <p className="record-summary" style={{ color: cmsFrameMutedTextColor }}>
               Letter Code: <strong>{currentLetterCode}</strong>
             </p>
           )}
 
           {(currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && !cmsLoading && otherAssetsOptions.length > 0 && (
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.45rem",
-                marginBottom: "0.85rem",
-              }}
-            >
-              <label
-                htmlFor="other-assets-select"
-                style={{
-                  fontSize: "0.9rem",
-                  color: cmsFrameMutedTextColor,
-                }}
-              >
+            <div className="control-group">
+              <label htmlFor="other-assets-select" className="field__label">
                 Other Assets:
               </label>
               <select
                 id="other-assets-select"
                 value={selectedOtherAssetsCodename}
                 onChange={(event) => setSelectedOtherAssetsCodename(event.target.value)}
-                style={{
-                  fontSize: "0.9rem",
-                  padding: "0.35rem 0.5rem",
-                  backgroundColor: "#ffffff",
-                  color: "#111111",
-                  border: "1px solid #d6d6d6",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
+                className="select"
               >
                 {otherAssetsOptions.map((option) => (
                   <option key={option.codename} value={option.codename}>
@@ -1397,39 +1320,24 @@ export default function Home() {
             </div>
           )}
 
-          {currentLetterCode && !cmsLoading && !cmsErrorMessage && (
-            <p
-              style={{
-                marginTop: 0,
-                marginBottom: "0.75rem",
-                color: cmsFrameMutedTextColor,
-                fontSize: "0.85rem",
-              }}
-            >
-              {usePreviewContent && comparePublishedToDraft
-                ? "Comparing Published -> Draft. Only changed Draft text is highlighted in green."
-                : usePreviewContent
-                  ? "Draft view without Published comparison highlighting."
-                  : "Published view: highlights are disabled."}
-            </p>
-          )}
-
           {cmsLoading && (
-            <p style={{ margin: 0, color: cmsFrameMutedTextColor }}>Loading CMS content...</p>
+            <p className="status" style={{ color: cmsFrameMutedTextColor, textAlign: "left", alignSelf: "flex-start" }}>Loading CMS content...</p>
           )}
 
           {cmsErrorMessage && (
-            <p style={{ margin: 0, color: cmsFrameErrorColor }}>Error: {cmsErrorMessage}</p>
+            <p className="status status--error" style={{ color: cmsFrameErrorColor, textAlign: "left", alignSelf: "flex-start" }}>
+              Error: {cmsErrorMessage}
+            </p>
           )}
 
           {cmsNoticeMessage && !cmsErrorMessage && (
-            <p style={{ marginTop: "0.5rem", marginBottom: 0, color: cmsFrameMutedTextColor }}>
+            <p className="status status--notice" style={{ color: cmsFrameMutedTextColor, textAlign: "left", alignSelf: "flex-start" }}>
               {cmsNoticeMessage}
             </p>
           )}
 
           {!cmsLoading && cmsNotConfigured && currentLetterCode && (
-            <p style={{ marginTop: "0.75rem", color: cmsFrameMutedTextColor }}>
+            <p className="status" style={{ color: cmsFrameMutedTextColor, textAlign: "left", alignSelf: "flex-start" }}>
               No template is configured in Kontent.ai for letter code
               {" "}
               <strong>{currentLetterCode}</strong>.
@@ -1437,20 +1345,25 @@ export default function Home() {
           )}
 
           {!cmsLoading && !cmsErrorMessage && activeContent.title && (
-            <h3 style={{ marginTop: 0, marginBottom: "0.5rem", fontSize: "1rem" }}>{activeContent.title}</h3>
+            <h3 className="panel__title" style={{ color: cmsFrameTextColor, textAlign: "left", alignSelf: "flex-start", margin: 0, marginTop: "16px" }}>{activeContent.title}</h3>
           )}
 
           {!cmsLoading && !cmsErrorMessage && highlightedCmsHtml && (
             <section
+              className="panel"
               style={{
-                border: "1px solid #e5e5e5",
                 borderTop: `4px solid ${cmsBrandColor}`,
-                borderRadius: "8px",
-                padding: "0.9rem",
-                backgroundColor: "#ffffff",
+                backgroundColor: cmsTemplateCanvasBackground,
+                color: cmsTemplateCanvasTextColor,
               }}
             >
-              <div style={{ marginBottom: "2.2rem" }}>
+              <div
+                className="panel__body"
+                style={{
+                  backgroundColor: cmsTemplateCanvasBackground,
+                  color: cmsTemplateCanvasTextColor,
+                }}
+              >
                 <Image
                   src={cmsLetterLogoSrc}
                   alt={cmsLetterLogoAlt}
@@ -1458,152 +1371,80 @@ export default function Home() {
                   height={45}
                   style={{ width: "min(100%, 210px)", height: "auto", objectFit: "contain" }}
                 />
-              </div>
-
-              <div
-                className="cms-rich-text"
-                dangerouslySetInnerHTML={{ __html: highlightedCmsHtml }}
-              />
+                <div className="cms-rich-text" dangerouslySetInnerHTML={{ __html: highlightedCmsHtml }} />
 
               {activeContent.brandPartner?.disclaimer && (
-                <div
-                  style={{
-                    marginTop: "2.5rem",
-                    paddingTop: "1.5rem",
-                    borderTop: `2px solid ${cmsBrandColor}`,
-                    fontSize: "0.9rem",
-                    color: "#555",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  <strong style={{ display: "block", marginBottom: "0.5rem", color: "#333" }}>
+                <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${cmsBrandColor}` }}>
+                  <strong style={{ display: "block", marginBottom: "0.5rem", color: "inherit" }}>
                     Disclaimer:
                   </strong>
-                  <div
-                    className="cms-rich-text"
-                    style={{ fontSize: "0.9rem" }}
-                    dangerouslySetInnerHTML={{ __html: activeContent.brandPartner.disclaimer }}
-                  />
+                  <div className="cms-rich-text" dangerouslySetInnerHTML={{ __html: activeContent.brandPartner.disclaimer }} />
                 </div>
               )}
+              </div>
             </section>
           )}
 
           {!cmsLoading && !cmsErrorMessage && !activeContent.html && activeContent.raw !== null && (
-            <pre
-              style={{
-                margin: 0,
-                padding: "1rem",
-                overflowX: "auto",
-                borderRadius: "8px",
-                border: "1px solid #d6d6d6",
-                backgroundColor: "#f3f4f6",
-                fontSize: "0.85rem",
-              }}
-            >
+            <pre className="code-block">
               {JSON.stringify(activeContent.raw, null, 2)}
             </pre>
           )}
+          </div>
         </article>
 
-        <section
-          style={{
-            // File upload + XML record panels moved to the left side.
-            gridColumn: "1",
-            // Keep both columns in the same first row to avoid extra top whitespace on the left.
-            gridRow: "1",
-            // Prevent wide loaded XML content from spilling into the right column.
-            minWidth: 0,
-            display: "grid",
-            gap: "1rem",
-          }}
-        >
-          <article
-            style={{
-              minWidth: 0,
-              border: "1px solid #d6d6d6",
-              borderRadius: "8px",
-              backgroundColor: "#fafafa",
-              padding: "1rem",
-            }}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1.1rem" }}>
-              Copy the path to the file below:
-            </h2>
+        <section className="workspace-column" style={{ gridColumn: "1", gridRow: "1" }}>
+          <article className="panel">
+            <div className="panel__header">
+              <p className="panel__eyebrow">Input</p>
+              <h2 className="panel__title">Load XML</h2>
+              <p className="panel__description">Choose a file to populate the record navigator and preview.</p>
+            </div>
 
-            <section
-              style={{
-                display: "grid",
-                gap: "0.75rem",
-              }}
-            >
-              <label htmlFor="xml-file" style={{ display: "block", marginBottom: "0.5rem" }}>File path</label>
+            <section className="panel__body">
+              <label htmlFor="xml-file" className="field__label">File path</label>
               <input
                 id="xml-file"
                 type="file"
                 accept=".xml"
                 onChange={handleLocalFileSelect}
                 disabled={isLoading}
-                style={{
-                  display: "none",
-                }}
+                style={{ display: "none" }}
               />
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <div className="file-row">
                 <label
                   htmlFor="xml-file"
-                  style={{
-                    display: "inline-block",
-                    padding: "0.6rem 1.2rem",
-                    backgroundColor: "#0066cc",
-                    color: "#fff",
-                    borderRadius: "6px",
-                    cursor: isLoading ? "not-allowed" : "pointer",
-                    border: "1px solid #0052a3",
-                    fontWeight: "500",
-                    opacity: isLoading ? 0.6 : 1,
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isLoading) {
-                      (e.currentTarget as HTMLElement).style.backgroundColor = "#0052a3";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = "#0066cc";
-                  }}
+                  className="file-button file-button--primary"
+                  aria-disabled={isLoading}
+                  style={{ opacity: isLoading ? 0.6 : 1 }}
                 >
                   Choose File
                 </label>
-                <span style={{ color: selectedFileName ? "#333" : "#999", fontSize: "0.9rem" }}>
+                <span className={selectedFileName ? "file-name file-name--selected" : "file-name"}>
                   {selectedFileName || "No file selected"}
                 </span>
               </div>
 
-              <small style={{ color: "#555" }}>
+              <small className="helper-text">
                 Select an XML file from your computer to preview the letter content.
               </small>
 
               {errorMessage && (
-                <p style={{ margin: 0, color: "#b00020" }}>Error: {errorMessage}</p>
+                <p className="status status--error">Error: {errorMessage}</p>
               )}
             </section>
           </article>
 
-          <article
-            style={{
-              minWidth: 0,
-              border: "1px solid #d6d6d6",
-              borderRadius: "8px",
-              backgroundColor: "#ffffff",
-              padding: "1rem",
-            }}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1.1rem" }}>
-              XML Record Panel
-            </h2>
+          <article className="panel">
+            <div className="panel__header">
+              <p className="panel__eyebrow">Records</p>
+              <h2 className="panel__title">XML Record Panel</h2>
+            </div>
+
+            <div className="panel__body">
 
           {records.length > 0 && (
-            <p style={{ marginTop: 0, marginBottom: "0.75rem", color: "#333", fontSize: "0.9rem" }}>
+            <p className="record-summary">
               Loaded <strong>{records.length}</strong> record{records.length !== 1 ? "s" : ""}.
               {letterCodes.length > 0
                 ? ` Letter codes found: ${letterCodes.join(", ")}.`
@@ -1612,17 +1453,9 @@ export default function Home() {
           )}
 
           {records.length > 0 && (
-            <section
-              style={{
-                marginBottom: "0.75rem",
-                display: "flex",
-                gap: "0.75rem",
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
+            <section className="nav-row">
               {/* Letter type filter resets navigation index when changed */}
-              <label htmlFor="letter-code-filter" style={{ fontWeight: 500 }}>
+              <label htmlFor="letter-code-filter" className="field__label">
                 Filter by Letter Type:
               </label>
               <select
@@ -1632,12 +1465,7 @@ export default function Home() {
                   setLetterCodeFilter(event.target.value);
                   setCurrentIndex(0);
                 }}
-                style={{
-                  padding: "0.4rem 0.6rem",
-                  border: "1px solid #b9b9b9",
-                  borderRadius: "6px",
-                  backgroundColor: "#fff",
-                }}
+                className="select"
               >
                 <option value="">All ({records.length})</option>
                 {letterCodes.map((code) => (
@@ -1651,25 +1479,12 @@ export default function Home() {
           )}
 
           {filteredRecords.length > 0 && (
-            <section
-              style={{
-                marginBottom: "0.75rem",
-                display: "flex",
-                gap: "0.5rem",
-                alignItems: "center",
-              }}
-            >
+            <section className="nav-row">
               <button
                 type="button"
                 onClick={() => setCurrentIndex((prev) => prev - 1)}
                 disabled={currentIndex === 0 || isLoading}
-                style={{
-                  padding: "0.5rem 0.75rem",
-                  border: "1px solid #b9b9b9",
-                  borderRadius: "6px",
-                  backgroundColor: "#fff",
-                  cursor: currentIndex === 0 || isLoading ? "not-allowed" : "pointer",
-                }}
+                className="button button--secondary"
               >
                 Previous
               </button>
@@ -1678,56 +1493,34 @@ export default function Home() {
                 type="button"
                 onClick={() => setCurrentIndex((prev) => prev + 1)}
                 disabled={currentIndex === filteredRecords.length - 1 || isLoading}
-                style={{
-                  padding: "0.5rem 0.75rem",
-                  border: "1px solid #b9b9b9",
-                  borderRadius: "6px",
-                  backgroundColor: "#fff",
-                  cursor:
-                    currentIndex === filteredRecords.length - 1 || isLoading
-                      ? "not-allowed"
-                      : "pointer",
-                }}
+                className="button button--secondary"
               >
                 Next
               </button>
 
-              <span>
+              <span className="nav-row__count">
                 Record {currentIndex + 1} of {filteredRecords.length}
               </span>
             </section>
           )}
 
           {filteredRecords.length === 0 && records.length > 0 && (
-            <p style={{ marginTop: 0, marginBottom: "0.75rem", color: "#555" }}>
+            <p className="empty-state">
               No records match the selected letter type.
             </p>
           )}
 
             {filteredRecord !== null && (
-              <section>
-              <h3 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1rem" }}>
-                Record {currentIndex + 1}{" "}
-                <span style={{ color: "#555", fontWeight: 400, fontSize: "0.9rem" }}>
+              <section className="record-card">
+              <h3 className="record-card__title">
+                Record {currentIndex + 1} {" "}
+                <span style={{ color: "var(--muted)", fontWeight: 500, fontSize: "0.9rem" }}>
                   {String(filteredRecord["Letter_Code_"] ?? "Unknown letter type")}
                 </span>
               </h3>
 
               {/* Letter envelope metadata: fields that sit directly on each Letter record */}
-              <div
-                style={{
-                  padding: "0.75rem 1rem",
-                  borderRadius: "8px",
-                  border: "1px solid #d6d6d6",
-                  backgroundColor: "#fafafa",
-                  marginBottom: "0.75rem",
-                  display: "grid",
-                  gridTemplateColumns: "max-content 1fr",
-                  columnGap: "1.5rem",
-                  rowGap: "0.3rem",
-                  fontSize: "0.9rem",
-                }}
-              >
+              <div className="record-meta">
                 {([
                   "Entry_No_",
                   "Letter_Code_",
@@ -1738,8 +1531,8 @@ export default function Home() {
                 ] as const).map((key) =>
                   key in filteredRecord ? (
                     <Fragment key={key}>
-                      <span style={{ color: "#555", fontWeight: 500 }}>{key}</span>
-                      <span>{String(filteredRecord[key])}</span>
+                      <span className="record-meta__label">{key}</span>
+                      <span className="record-meta__value">{String(filteredRecord[key])}</span>
                     </Fragment>
                   ) : null
                 )}
@@ -1748,26 +1541,17 @@ export default function Home() {
               {/* Letter_Data content: schema varies per Letter_Code_ */}
               {"Letter_Data" in filteredRecord && (
                 <>
-                  <h4 style={{ marginTop: 0, marginBottom: "0.4rem", fontSize: "0.95rem", color: "#333" }}>
+                  <h4 className="panel__title" style={{ marginTop: 0, marginBottom: "0.4rem", fontSize: "0.95rem" }}>
                     Letter Data
                   </h4>
-                  <pre
-                    style={{
-                      margin: 0,
-                      padding: "1rem",
-                      overflowX: "auto",
-                      borderRadius: "8px",
-                      border: "1px solid #d6d6d6",
-                      backgroundColor: "#f3f4f6",
-                      fontSize: "0.85rem",
-                    }}
-                  >
+                  <pre className="code-block code-block--letter-data">
                     {JSON.stringify(filteredRecord["Letter_Data"], null, 2)}
                   </pre>
                 </>
               )}
               </section>
             )}
+            </div>
           </article>
         </section>
       </section>
