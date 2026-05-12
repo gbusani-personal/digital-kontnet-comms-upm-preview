@@ -1211,9 +1211,6 @@ export default function Home() {
         <div>
           <p className="app-hero__eyebrow">XML to CMS preview</p>
           <h1 className="app-hero__title">Comms Live Preview</h1>
-          <p className="app-hero__subtitle">
-            Load XML records, browse letter types, and compare the resolved Kontent.ai output in a clean two-panel workspace.
-          </p>
         </div>
       </header>
 
