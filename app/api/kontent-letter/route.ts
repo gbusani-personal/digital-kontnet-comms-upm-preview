@@ -105,6 +105,11 @@ type BrandPartner = {
   disclaimer: string;
 };
 
+type OtherAssetsOption = {
+  codename: string;
+  name: string;
+};
+
 type ClWaiverConfig = {
   letterCode: string;
   selectorQueryParam: string;
@@ -563,6 +568,38 @@ function extractContent(
     html,
     raw: item,
   };
+}
+
+function readTemplateDisplayName(item: KontentItem): string {
+  const elements = item.elements ?? {};
+
+  return (
+    readStringElementValue(elements.title) ||
+    readStringElementValue(elements.heading) ||
+    readStringElementValue(elements.template_name) ||
+    readStringElementValue(elements.letter_template_name) ||
+    readStringElementValue(elements.name) ||
+    readTextValue(item.system?.name) ||
+    readTextValue(item.system?.codename) ||
+    "Letter Template"
+  );
+}
+
+function isExcludedOtherAssetsTemplate(item: KontentItem): boolean {
+  const elements = item.elements ?? {};
+  const candidateValues = [
+    readTextValue(item.system?.name),
+    readTextValue(item.system?.codename),
+    readStringElementValue(elements.title),
+    readStringElementValue(elements.heading),
+    readStringElementValue(elements.template_name),
+    readStringElementValue(elements.letter_template_name),
+    readStringElementValue(elements.name),
+  ].map((value) => normalizeCodeKey(value));
+
+  return candidateValues.some(
+    (value) => value.includes("COJOBRIEF") || value.includes("ATTACHMENTS")
+  );
 }
 
 async function fetchKontentItems(
@@ -1745,6 +1782,7 @@ export async function GET(request: Request) {
       const combinedModularContent = { ...allModularContent, ...modularContent };
 
       let coiTemplate: KontentItem | null = null;
+      let matchedCoiLetterTypeItem: KontentItem | null = null;
       for (const letterTypeItem of eligibleCoiLetterTypeItems) {
         const template = resolveCoiTemplate(
           letterTypeItem,
@@ -1754,6 +1792,7 @@ export async function GET(request: Request) {
         );
         if (template) {
           coiTemplate = template;
+          matchedCoiLetterTypeItem = letterTypeItem;
           break;
         }
       }
@@ -1768,8 +1807,103 @@ export async function GET(request: Request) {
         );
       }
 
+      if (!matchedCoiLetterTypeItem) {
+        return NextResponse.json(
+          {
+            error: "Unable to resolve matched COI LetterType item for dropdown options.",
+          },
+          { status: 500 }
+        );
+      }
+
+      const defaultTemplateCodename = readTextValue(coiTemplate.system?.codename);
+      const requestedOtherAssetsCodename = searchParams.get("otherAssetsCodename") || "";
+
+      const linkedTemplateCodenames = readLinkedTemplateCodenames(
+        matchedCoiLetterTypeItem.elements ?? {}
+      );
+
+      const otherAssetsOptions: OtherAssetsOption[] = [];
+      const seenCodenames = new Set<string>();
+
+      // Keep the currently matched template as the first dropdown option unless excluded.
+      if (defaultTemplateCodename && !isExcludedOtherAssetsTemplate(coiTemplate)) {
+        const normalizedCodename = normalizeCodeKey(defaultTemplateCodename);
+        otherAssetsOptions.push({
+          codename: defaultTemplateCodename,
+          name: readTemplateDisplayName(coiTemplate),
+        });
+        seenCodenames.add(normalizedCodename);
+      }
+
+      // Add every linked template from the matched COI letter type item(s).
+      for (const codename of linkedTemplateCodenames) {
+        if (!codename) {
+          continue;
+        }
+        const normalizedCodename = normalizeCodeKey(codename);
+        if (seenCodenames.has(normalizedCodename)) {
+          continue;
+        }
+        const template = readItemByCodename(codename, combinedItems, combinedModularContent);
+        if (!template || isExcludedOtherAssetsTemplate(template)) {
+          continue;
+        }
+
+        const resolvedCodename = readTextValue(template.system?.codename) || codename;
+        otherAssetsOptions.push({
+          codename: resolvedCodename,
+          name: readTemplateDisplayName(template),
+        });
+        seenCodenames.add(normalizedCodename);
+      }
+
+      let selectedTemplate = coiTemplate;
+      let selectedOtherAssetsCodename = "";
+
+      if (otherAssetsOptions.length > 0) {
+        const defaultOption = otherAssetsOptions.find(
+          (option) => normalizeCodeKey(option.codename) === normalizeCodeKey(defaultTemplateCodename)
+        );
+
+        if (defaultOption) {
+          selectedOtherAssetsCodename = defaultOption.codename;
+        } else {
+          const firstOption = otherAssetsOptions[0];
+          selectedOtherAssetsCodename = firstOption.codename;
+          const firstTemplate = readItemByCodename(
+            firstOption.codename,
+            combinedItems,
+            combinedModularContent
+          );
+          if (firstTemplate) {
+            selectedTemplate = firstTemplate;
+          }
+        }
+      }
+
+      const allowedOptionCodenames = new Set(
+        otherAssetsOptions.map((option) => normalizeCodeKey(option.codename))
+      );
+
+      if (
+        requestedOtherAssetsCodename &&
+        allowedOptionCodenames.has(normalizeCodeKey(requestedOtherAssetsCodename)) &&
+        normalizeCodeKey(requestedOtherAssetsCodename) !== normalizeCodeKey(selectedOtherAssetsCodename)
+      ) {
+        const overrideTemplate = readItemByCodename(
+          requestedOtherAssetsCodename,
+          combinedItems,
+          combinedModularContent
+        );
+        if (overrideTemplate) {
+          selectedTemplate = overrideTemplate;
+          selectedOtherAssetsCodename = requestedOtherAssetsCodename;
+        }
+      }
+
       const content = extractContent(
-        coiTemplate,
+        selectedTemplate,
         combinedItems,
         combinedModularContent
       );
@@ -1777,6 +1911,8 @@ export async function GET(request: Request) {
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          otherAssetsOptions,
+          selectedOtherAssetsCodename,
         },
         { status: 200 }
       );

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
 type XmlValue = string | XmlObject | XmlValue[];
@@ -21,6 +21,13 @@ type CmsVersionState = {
     primaryColorHex?: string;
     disclaimer?: string;
   } | null;
+  otherAssetsOptions?: OtherAssetsOption[];
+  selectedOtherAssetsCodename?: string;
+};
+
+type OtherAssetsOption = {
+  codename: string;
+  name: string;
 };
 
 const RAW_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}/g;
@@ -581,7 +588,11 @@ export default function Home() {
     raw: null,
     brandPartner: null,
   });
+  const [otherAssetsOptions, setOtherAssetsOptions] = useState<OtherAssetsOption[]>([]);
+  const [selectedOtherAssetsCodename, setSelectedOtherAssetsCodename] = useState("");
   const [selectedFileName, setSelectedFileName] = useState<string>("");
+  // Tracks the last record-level deps so we can detect navigation vs. dropdown selection changes.
+  const coiRecordKeyRef = useRef("");
 
   // Convert an XML element recursively into a plain JavaScript object.
   const elementToObject = (element: Element): XmlObject => {
@@ -961,8 +972,31 @@ export default function Home() {
         setCmsNotConfigured(false);
         setDraftContent({ title: "", html: "", raw: null, brandPartner: null });
         setPublishedContent({ title: "", html: "", raw: null, brandPartner: null });
+        setOtherAssetsOptions([]);
+        setSelectedOtherAssetsCodename("");
         return;
       }
+
+      if (currentLetterCode !== "COI") {
+        setOtherAssetsOptions([]);
+        setSelectedOtherAssetsCodename("");
+      }
+
+      // Detect record-level navigation vs. user selection change.
+      // Build a key from all deps except selectedOtherAssetsCodename.
+      const recordKey = [
+        currentLetterCode, partnerName, waiverOutcome, underwriter, autoRenewal,
+        cancellationReason, cancelWithCoolingPeriod, cxPremiumDueDate,
+        taskSubcategoryCode, upmTrigger, idrDelayReason, renewalLetterType, renewalLetterReasonCode,
+      ].join("|");
+      const isRecordChange = recordKey !== coiRecordKeyRef.current;
+      coiRecordKeyRef.current = recordKey;
+      // On record navigation clear stale Other Assets state immediately.
+      if (isRecordChange && currentLetterCode === "COI") {
+        setOtherAssetsOptions([]);
+        setSelectedOtherAssetsCodename("");
+      }
+      const effectiveOtherAssetsCodename = isRecordChange ? "" : selectedOtherAssetsCodename;
 
       setCmsLoading(true);
       setCmsErrorMessage(null);
@@ -1025,6 +1059,10 @@ export default function Home() {
             params.set("letterReasonCode", renewalLetterReasonCode);
           }
 
+          if (currentLetterCode === "COI" && effectiveOtherAssetsCodename) {
+            params.set("otherAssetsCodename", effectiveOtherAssetsCodename);
+          }
+
           return params;
         };
 
@@ -1047,6 +1085,8 @@ export default function Home() {
               primaryColorHex?: string;
               disclaimer?: string;
             } | null;
+            otherAssetsOptions?: OtherAssetsOption[];
+            selectedOtherAssetsCodename?: string;
           } = {};
 
           if (responseText.trim()) {
@@ -1075,6 +1115,8 @@ export default function Home() {
             html: payload.html || "",
             raw: payload.raw ?? null,
             brandPartner: payload.brandPartner ?? null,
+            otherAssetsOptions: payload.otherAssetsOptions ?? [],
+            selectedOtherAssetsCodename: payload.selectedOtherAssetsCodename ?? "",
           };
         };
 
@@ -1085,6 +1127,12 @@ export default function Home() {
 
         if (draftResult.status === "fulfilled") {
           setDraftContent(draftResult.value);
+          if (currentLetterCode === "COI") {
+            setOtherAssetsOptions(draftResult.value.otherAssetsOptions ?? []);
+            setSelectedOtherAssetsCodename(
+              draftResult.value.selectedOtherAssetsCodename ?? ""
+            );
+          }
         }
 
         if (publishedResult.status === "fulfilled") {
@@ -1144,6 +1192,7 @@ export default function Home() {
     idrDelayReason,
     renewalLetterType,
     renewalLetterReasonCode,
+    selectedOtherAssetsCodename,
   ]);
 
   const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;
@@ -1263,8 +1312,8 @@ export default function Home() {
                 cursor: "pointer",
               }}
             >
-              <option value="draft">📝 Draft Content</option>
-              <option value="published">✅ Published Content</option>
+              <option value="draft">Draft Content</option>
+              <option value="published">Published Content</option>
             </select>
           </div>
 
@@ -1305,6 +1354,47 @@ export default function Home() {
             >
               Letter Code: <strong>{currentLetterCode}</strong>
             </p>
+          )}
+
+          {currentLetterCode === "COI" && !cmsLoading && otherAssetsOptions.length > 0 && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.45rem",
+                marginBottom: "0.85rem",
+              }}
+            >
+              <label
+                htmlFor="other-assets-select"
+                style={{
+                  fontSize: "0.9rem",
+                  color: cmsFrameMutedTextColor,
+                }}
+              >
+                Other Assets:
+              </label>
+              <select
+                id="other-assets-select"
+                value={selectedOtherAssetsCodename}
+                onChange={(event) => setSelectedOtherAssetsCodename(event.target.value)}
+                style={{
+                  fontSize: "0.9rem",
+                  padding: "0.35rem 0.5rem",
+                  backgroundColor: "#ffffff",
+                  color: "#111111",
+                  border: "1px solid #d6d6d6",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                }}
+              >
+                {otherAssetsOptions.map((option) => (
+                  <option key={option.codename} value={option.codename}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           {currentLetterCode && !cmsLoading && !cmsErrorMessage && (
@@ -1531,7 +1621,7 @@ export default function Home() {
                 flexWrap: "wrap",
               }}
             >
-              {/* Letter type filter — resets navigation index when changed */}
+              {/* Letter type filter resets navigation index when changed */}
               <label htmlFor="letter-code-filter" style={{ fontWeight: 500 }}>
                 Filter by Letter Type:
               </label>
@@ -1619,11 +1709,11 @@ export default function Home() {
               <h3 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "1rem" }}>
                 Record {currentIndex + 1}{" "}
                 <span style={{ color: "#555", fontWeight: 400, fontSize: "0.9rem" }}>
-                  — {String(filteredRecord["Letter_Code_"] ?? "Unknown letter type")}
+                  {String(filteredRecord["Letter_Code_"] ?? "Unknown letter type")}
                 </span>
               </h3>
 
-              {/* Letter envelope metadata — fields that sit directly on each Letter record */}
+              {/* Letter envelope metadata: fields that sit directly on each Letter record */}
               <div
                 style={{
                   padding: "0.75rem 1rem",
@@ -1655,7 +1745,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Letter_Data content — schema varies per Letter_Code_ */}
+              {/* Letter_Data content: schema varies per Letter_Code_ */}
               {"Letter_Data" in filteredRecord && (
                 <>
                   <h4 style={{ marginTop: 0, marginBottom: "0.4rem", fontSize: "0.95rem", color: "#333" }}>
