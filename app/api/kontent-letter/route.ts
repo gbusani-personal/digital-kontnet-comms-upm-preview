@@ -103,6 +103,8 @@ type BrandPartner = {
   logoUrl: string;
   primaryColorHex: string;
   disclaimer: string;
+  routineCareBenefitLimit: string;
+  boosterCareBenefitLimit: string;
 };
 
 type OtherAssetsOption = {
@@ -215,6 +217,62 @@ const SINGLE_TEMPLATE_LETTER_CONFIGS: SingleTemplateLetterConfig[] = [
 const SINGLE_TEMPLATE_LETTER_CODE_KEYS = new Set(
   SINGLE_TEMPLATE_LETTER_CONFIGS.map((config) => normalizeCodeKey(config.letterCode))
 );
+
+// Content Block Visibility Context: values needed to evaluate block visibility rules
+type ContentBlockVisibilityContext = {
+  letterType?: string;
+  qapiVersion?: string;
+  routineCare?: string;
+  boosterCare?: string;
+  paymentPeriod?: string;
+  installmentCollectionFeeBase?: string;
+};
+
+// Visibility rules for content blocks
+const CONTENT_BLOCK_VISIBILITY_RULES: Record<string, (context: ContentBlockVisibilityContext) => boolean> = {
+  // Template-level blocks
+  coi_template_glm3: (ctx) => ctx.qapiVersion === "QAPI3",
+  
+  // Top section blocks (mutually exclusive based on letter type)
+  coi_top_section_default: (ctx) => ctx.letterType !== "Renewal_Offer",
+  coi_top_section_renewal_offer: (ctx) => ctx.letterType === "Renewal_Offer",
+  
+  // Heading blocks (mutually exclusive based on letter type)
+  coi_heading_default: (ctx) => ctx.letterType !== "Renewal_Offer",
+  coi_heading_renewal_offer: (ctx) => ctx.letterType === "Renewal_Offer",
+  
+  // Policy benefit section blocks (based on care types)
+  policy_benefit_section_routine_care_limit: (ctx) => ctx.routineCare === "Yes",
+  coi_policy_benefit_section_booster_care_limit: (ctx) => ctx.boosterCare === "Yes",
+  
+  // Premium details blocks (payment-related)
+  coi_premium_details_section_method_of_payment: () => true, // Always display
+  coi_premium_details_section_payment_instalment: (ctx) => ctx.paymentPeriod === "Monthly" || ctx.paymentPeriod === "Fortnightly",
+  coi_premium_details_section_instalment_collection: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined,
+  coi_premium_details_section_instalment_collection_fee: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined,
+  coi_premium_details_section_total_payment_premium: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined && (ctx.paymentPeriod === "Monthly" || ctx.paymentPeriod === "Fortnightly"),
+  
+  // Tax line (excluded for renewal offer)
+  coi_tax_line: (ctx) => ctx.letterType !== "Renewal_Offer",
+  
+  // Care benefit type-specific blocks (mutually exclusive based on care combination)
+  coi_routine_care_benefit_only: (ctx) => ctx.routineCare === "Yes" && ctx.boosterCare === "No",
+  coi_booster_care_benefit: (ctx) => ctx.routineCare === "No" && ctx.boosterCare === "Yes",
+  coi_routine_care_booster_care_benefit: (ctx) => ctx.routineCare === "Yes" && ctx.boosterCare === "Yes",
+  
+  // Final section (renewal offer specific)
+  coi_final_section_renewal_offer: (ctx) => ctx.letterType === "Renewal_Offer",
+};
+
+// Helper function to check if a content block should be visible
+function shouldShowContentBlock(blockCodename: string, context: ContentBlockVisibilityContext): boolean {
+  const rule = CONTENT_BLOCK_VISIBILITY_RULES[blockCodename];
+  if (!rule) {
+    // Default: show block if no specific rule defined
+    return true;
+  }
+  return rule(context);
+}
 
 function readTextValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -510,7 +568,8 @@ function resolveReusableBlocks(
   html: string,
   allItems: KontentItem[],
   modularContent: Record<string, KontentItem>,
-  visitedCodenames: Set<string>
+  visitedCodenames: Set<string>,
+  visibilityContext?: ContentBlockVisibilityContext
 ): string {
   if (!html.trim()) {
     return html;
@@ -521,6 +580,11 @@ function resolveReusableBlocks(
     const codename = codenameMatch?.[1]?.trim() || "";
 
     if (!codename) {
+      return "";
+    }
+
+    // Check visibility rules for this content block
+    if (visibilityContext && !shouldShowContentBlock(codename, visibilityContext)) {
       return "";
     }
 
@@ -538,14 +602,15 @@ function resolveReusableBlocks(
     nextVisited.add(normalizedCodename);
 
     const linkedHtml = extractFirstHtmlFromItem(linkedItem);
-    return resolveReusableBlocks(linkedHtml, allItems, modularContent, nextVisited);
+    return resolveReusableBlocks(linkedHtml, allItems, modularContent, nextVisited, visibilityContext);
   });
 }
 
 function extractContent(
   item: KontentItem,
   allItems: KontentItem[],
-  modularContent: Record<string, KontentItem>
+  modularContent: Record<string, KontentItem>,
+  visibilityContext?: ContentBlockVisibilityContext
 ): { title: string; html: string; raw: unknown } {
   const elements = item.elements ?? {};
 
@@ -561,7 +626,7 @@ function extractContent(
   if (itemCodename) {
     visitedCodenames.add(normalizeCodeKey(itemCodename));
   }
-  const html = resolveReusableBlocks(initialHtml, allItems, modularContent, visitedCodenames);
+  const html = resolveReusableBlocks(initialHtml, allItems, modularContent, visitedCodenames, visibilityContext);
 
   return {
     title,
@@ -1046,6 +1111,16 @@ function resolveBrandPartner(
           readStringElementValue(elements.primary_color) ||
           readStringElementValue(elements.primary_colour_hex),
         disclaimer: disclaimerText,
+        routineCareBenefitLimit:
+          readStringElementValue(elements.routine_care_benefit_limit) ||
+          readStringElementValue(elements.routinecarebenefitlimit) ||
+          readStringElementValue(elements.routine_care_benefitlimit) ||
+          readStringElementValue(elements.data_macros___brand_partner__routinecarebenefitlimit),
+        boosterCareBenefitLimit:
+          readStringElementValue(elements.booster_care_benefit_limit) ||
+          readStringElementValue(elements.boostercarebenefitlimit) ||
+          readStringElementValue(elements.booster_care_benefitlimit) ||
+          readStringElementValue(elements.data_macros___brand_partner__boostercarebenefitlimit),
       };
     }
 
@@ -1104,6 +1179,16 @@ function resolveBrandPartner(
       readStringElementValue(elements.primary_color) ||
       readStringElementValue(elements.primary_colour_hex),
     disclaimer: disclaimerText,
+    routineCareBenefitLimit:
+      readStringElementValue(elements.routine_care_benefit_limit) ||
+      readStringElementValue(elements.routinecarebenefitlimit) ||
+      readStringElementValue(elements.routine_care_benefitlimit) ||
+      readStringElementValue(elements.data_macros___brand_partner__routinecarebenefitlimit),
+    boosterCareBenefitLimit:
+      readStringElementValue(elements.booster_care_benefit_limit) ||
+      readStringElementValue(elements.boostercarebenefitlimit) ||
+      readStringElementValue(elements.booster_care_benefitlimit) ||
+      readStringElementValue(elements.data_macros___brand_partner__boostercarebenefitlimit),
   };
 }
 
@@ -1562,6 +1647,24 @@ export async function GET(request: Request) {
   const underwriter = searchParams.get("underwriter") || "";
   const partnerName = searchParams.get("partnerName") || "";
 
+  // Visibility context parameters
+  const letterTypeForVisibility = searchParams.get("letterTypeForVisibility") || "";
+  const qapiVersion = searchParams.get("qapiVersion") || "";
+  const routineCare = searchParams.get("routineCare") || "";
+  const boosterCare = searchParams.get("boosterCare") || "";
+  const paymentPeriod = searchParams.get("paymentPeriod") || "";
+  const installmentCollectionFeeBase = searchParams.get("installmentCollectionFeeBase") || "";
+
+  // Build visibility context for content block filtering
+  const visibilityContext: ContentBlockVisibilityContext = {
+    letterType: letterTypeForVisibility || undefined,
+    qapiVersion: qapiVersion || undefined,
+    routineCare: routineCare || undefined,
+    boosterCare: boosterCare || undefined,
+    paymentPeriod: paymentPeriod || undefined,
+    installmentCollectionFeeBase: installmentCollectionFeeBase || undefined,
+  };
+
   if (!letterCode) {
     return NextResponse.json({ error: "Missing letterCode query parameter." }, { status: 400 });
   }
@@ -1679,7 +1782,7 @@ export async function GET(request: Request) {
         );
       }
 
-      const content = extractContent(clWaiverResult.template, items, modularContent);
+      const content = extractContent(clWaiverResult.template, items, modularContent, visibilityContext);
       return NextResponse.json(
         {
           ...content,
@@ -1711,7 +1814,7 @@ export async function GET(request: Request) {
         );
       }
 
-      const content = extractContent(singleTemplate, items, modularContent);
+      const content = extractContent(singleTemplate, items, modularContent, visibilityContext);
       return NextResponse.json(
         {
           ...content,
@@ -1906,7 +2009,8 @@ export async function GET(request: Request) {
       const content = extractContent(
         selectedTemplate,
         combinedItems,
-        combinedModularContent
+        combinedModularContent,
+        visibilityContext
       );
       return NextResponse.json(
         {
@@ -2138,7 +2242,8 @@ export async function GET(request: Request) {
       const content = extractContent(
         selectedRenewalTemplate,
         combinedItems,
-        combinedModularContent
+        combinedModularContent,
+        visibilityContext
       );
 
       return NextResponse.json(
@@ -2182,7 +2287,7 @@ export async function GET(request: Request) {
         );
       }
 
-      const content = extractContent(cancelResult.template, items, modularContent);
+      const content = extractContent(cancelResult.template, items, modularContent, visibilityContext);
       return NextResponse.json(
         {
           ...content,
@@ -2219,7 +2324,7 @@ export async function GET(request: Request) {
         );
       }
 
-      const content = extractContent(complaintResult.template, items, modularContent);
+      const content = extractContent(complaintResult.template, items, modularContent, visibilityContext);
       return NextResponse.json(
         {
           ...content,
@@ -2296,7 +2401,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const content = extractContent(resolvedTemplate, items, modularContent);
+    const content = extractContent(resolvedTemplate, items, modularContent, visibilityContext);
 
     return NextResponse.json(
       {

@@ -9,18 +9,22 @@ type XmlObject = {
   [key: string]: XmlValue;
 };
 
+type BrandPartnerData = {
+  name?: string;
+  codename?: string;
+  partnerName?: string;
+  logoUrl?: string;
+  primaryColorHex?: string;
+  disclaimer?: string;
+  routineCareBenefitLimit?: string;
+  boosterCareBenefitLimit?: string;
+};
+
 type CmsVersionState = {
   title: string;
   html: string;
   raw: unknown | null;
-  brandPartner: {
-    name?: string;
-    codename?: string;
-    partnerName?: string;
-    logoUrl?: string;
-    primaryColorHex?: string;
-    disclaimer?: string;
-  } | null;
+  brandPartner: BrandPartnerData | null;
   otherAssetsOptions?: OtherAssetsOption[];
   selectedOtherAssetsCodename?: string;
 };
@@ -222,9 +226,38 @@ function resolvePlaceholderValue(token: string, lookup: Map<string, string>): st
   return null;
 }
 
+const BRAND_PARTNER_ONLY_PLACEHOLDERS = new Set([
+  "routinecarebenefitlimit",
+  "boostercarebenefitlimit",
+]);
+
+function resolveBrandPartnerOnlyPlaceholderValue(
+  token: string,
+  brandPartner: BrandPartnerData | null | undefined
+): string | null | undefined {
+  const normalizedToken = normalizeLookupKey(token);
+
+  if (!BRAND_PARTNER_ONLY_PLACEHOLDERS.has(normalizedToken)) {
+    return undefined;
+  }
+
+  if (!brandPartner) {
+    return null;
+  }
+
+  if (normalizedToken === "routinecarebenefitlimit") {
+    const value = (brandPartner.routineCareBenefitLimit || "").trim();
+    return value || null;
+  }
+
+  const value = (brandPartner.boosterCareBenefitLimit || "").trim();
+  return value || null;
+}
+
 function replaceCmsPlaceholders(
   templateHtml: string,
   record: unknown,
+  brandPartner: BrandPartnerData | null | undefined,
   showResolvedValues: boolean,
   highlightPlaceholders: boolean
 ): string {
@@ -234,13 +267,22 @@ function replaceCmsPlaceholders(
 
   const lookup = buildXmlValueLookup(record);
 
+  const resolveTokenValue = (token: string): string | null => {
+    const brandPartnerOnlyValue = resolveBrandPartnerOnlyPlaceholderValue(token, brandPartner);
+    if (brandPartnerOnlyValue !== undefined) {
+      return brandPartnerOnlyValue;
+    }
+
+    return resolvePlaceholderValue(token, lookup);
+  };
+
   const replaceToken = (match: string, primaryToken?: string, secondaryToken?: string) => {
     const token = String(primaryToken || secondaryToken || "").trim();
     if (!token) {
       return match;
     }
 
-    const value = resolvePlaceholderValue(token, lookup);
+    const value = resolveTokenValue(token);
     return value ?? match;
   };
 
@@ -304,7 +346,7 @@ function replaceCmsPlaceholders(
       const token =
         String(match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
 
-      const resolvedValue = token ? resolvePlaceholderValue(token, lookup) : null;
+      const resolvedValue = token ? resolveTokenValue(token) : null;
 
       if (showResolvedValues && resolvedValue !== null) {
         if (highlightPlaceholders) {
@@ -922,6 +964,33 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "LetterReasonCode")
     : "";
 
+  // Visibility context values - extracted from XML for content block filtering
+  const letterType = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "Letter_Type") ||
+      findFirstStringValueByKey(filteredRecord, "LetterType")
+    : "";
+
+  const qapiVersion = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "QAPIVersion") ||
+      findFirstStringValueByKey(filteredRecord, "QAPI_Version")
+    : "";
+
+  const routineCare = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "RoutineCare")
+    : "";
+
+  const boosterCare = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "BoosterCare")
+    : "";
+
+  const paymentPeriod = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "PaymentPeriod")
+    : "";
+
+  const installmentCollectionFeeBase = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "InstallmentCollectionFeeBase")
+    : "";
+
   const activeContent = useMemo(() => {
     return usePreviewContent ? draftContent : publishedContent;
   }, [usePreviewContent, draftContent, publishedContent]);
@@ -934,10 +1003,11 @@ export default function Home() {
     return replaceCmsPlaceholders(
       draftContent.html,
       filteredRecord,
+      draftContent.brandPartner,
       showResolvedCmsValues,
       highlightCmsPlaceholders
     );
-  }, [draftContent.html, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
+  }, [draftContent.html, draftContent.brandPartner, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 
   const resolvedPublishedHtml = useMemo(() => {
     if (!publishedContent.html) {
@@ -947,10 +1017,11 @@ export default function Home() {
     return replaceCmsPlaceholders(
       publishedContent.html,
       filteredRecord,
+      publishedContent.brandPartner,
       showResolvedCmsValues,
       highlightCmsPlaceholders
     );
-  }, [publishedContent.html, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
+  }, [publishedContent.html, publishedContent.brandPartner, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 
   const highlightedCmsHtml = useMemo(() => {
     // Compare mode highlights only changed Draft text against Published baseline.
@@ -1066,6 +1137,31 @@ export default function Home() {
             params.set("otherAssetsCodename", effectiveOtherAssetsCodename);
           }
 
+          // Visibility context parameters for content block filtering
+          if (letterType) {
+            params.set("letterTypeForVisibility", letterType);
+          }
+
+          if (qapiVersion) {
+            params.set("qapiVersion", qapiVersion);
+          }
+
+          if (routineCare) {
+            params.set("routineCare", routineCare);
+          }
+
+          if (boosterCare) {
+            params.set("boosterCare", boosterCare);
+          }
+
+          if (paymentPeriod) {
+            params.set("paymentPeriod", paymentPeriod);
+          }
+
+          if (installmentCollectionFeeBase) {
+            params.set("installmentCollectionFeeBase", installmentCollectionFeeBase);
+          }
+
           return params;
         };
 
@@ -1080,14 +1176,7 @@ export default function Home() {
             title?: string;
             html?: string;
             raw?: unknown;
-            brandPartner?: {
-              name?: string;
-              codename?: string;
-              partnerName?: string;
-              logoUrl?: string;
-              primaryColorHex?: string;
-              disclaimer?: string;
-            } | null;
+            brandPartner?: BrandPartnerData | null;
             otherAssetsOptions?: OtherAssetsOption[];
             selectedOtherAssetsCodename?: string;
           } = {};
@@ -1197,6 +1286,12 @@ export default function Home() {
     renewalLetterReasonCode,
     selectedOtherAssetsCodename,
     isOtherAssetsEligibleCode,
+    letterType,
+    qapiVersion,
+    routineCare,
+    boosterCare,
+    paymentPeriod,
+    installmentCollectionFeeBase,
   ]);
 
   const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;
