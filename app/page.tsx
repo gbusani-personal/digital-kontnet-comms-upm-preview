@@ -792,6 +792,9 @@ export default function Home() {
     filteredRecord && typeof filteredRecord["Letter_Code_"] === "string"
       ? filteredRecord["Letter_Code_"].trim()
       : "";
+  const currentLetterCodeKey = currentLetterCode.toUpperCase();
+  const isOtherAssetsEligibleCode =
+    currentLetterCodeKey === "COI" || currentLetterCodeKey === "RENEWAL";
 
   const normalizeFieldKey = (value: string): string => {
     return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -977,7 +980,7 @@ export default function Home() {
         return;
       }
 
-      if (currentLetterCode !== "COI" && currentLetterCode !== "RENEWAL") {
+      if (!isOtherAssetsEligibleCode) {
         setOtherAssetsOptions([]);
         setSelectedOtherAssetsCodename("");
       }
@@ -992,7 +995,7 @@ export default function Home() {
       const isRecordChange = recordKey !== coiRecordKeyRef.current;
       coiRecordKeyRef.current = recordKey;
       // On record navigation clear stale Other Assets state immediately.
-      if (isRecordChange && (currentLetterCode === "COI" || currentLetterCode === "RENEWAL")) {
+      if (isRecordChange && isOtherAssetsEligibleCode) {
         setOtherAssetsOptions([]);
         setSelectedOtherAssetsCodename("");
       }
@@ -1059,7 +1062,7 @@ export default function Home() {
             params.set("letterReasonCode", renewalLetterReasonCode);
           }
 
-          if ((currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && effectiveOtherAssetsCodename) {
+          if (isOtherAssetsEligibleCode && effectiveOtherAssetsCodename) {
             params.set("otherAssetsCodename", effectiveOtherAssetsCodename);
           }
 
@@ -1127,7 +1130,7 @@ export default function Home() {
 
         if (draftResult.status === "fulfilled") {
           setDraftContent(draftResult.value);
-          if (currentLetterCode === "COI" || currentLetterCode === "RENEWAL") {
+          if (isOtherAssetsEligibleCode) {
             setOtherAssetsOptions(draftResult.value.otherAssetsOptions ?? []);
             setSelectedOtherAssetsCodename(
               draftResult.value.selectedOtherAssetsCodename ?? ""
@@ -1193,6 +1196,7 @@ export default function Home() {
     renewalLetterType,
     renewalLetterReasonCode,
     selectedOtherAssetsCodename,
+    isOtherAssetsEligibleCode,
   ]);
 
   const cmsLetterLogoSrc = activeContent.brandPartner?.logoUrl || fallbackLogoSrc;
@@ -1272,7 +1276,7 @@ export default function Home() {
               </select>
             </div>
 
-            {(currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && (
+            {currentLetterCode && (
               <label className="toggle">
                 <input
                   type="checkbox"
@@ -1284,6 +1288,16 @@ export default function Home() {
               </label>
             )}
           </div>
+
+          {currentLetterCode && !cmsLoading && !cmsErrorMessage && (
+            <p className="helper-text" style={{ color: cmsFrameMutedTextColor, textAlign: "left" }}>
+              {usePreviewContent && comparePublishedToDraft
+                ? "Comparing Published -> Draft. Only changed Draft text is highlighted in green."
+                : usePreviewContent
+                  ? "Draft view without Published comparison highlighting."
+                  : "Published view: highlights are disabled."}
+            </p>
+          )}
 
           {!currentLetterCode && (
             <p className="status" style={{ color: cmsFrameMutedTextColor }}>
@@ -1297,7 +1311,7 @@ export default function Home() {
             </p>
           )}
 
-          {(currentLetterCode === "COI" || currentLetterCode === "RENEWAL") && !cmsLoading && otherAssetsOptions.length > 0 && (
+          {isOtherAssetsEligibleCode && !cmsLoading && otherAssetsOptions.length > 0 && (
             <div className="control-group">
               <label htmlFor="other-assets-select" className="field__label">
                 Other Assets:
