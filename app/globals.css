@@ -375,6 +375,16 @@ body {
 
 .record-meta__value {
   color: var(--foreground);
+  min-width: 0;
+  display: inline-block;
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.record-meta {
+  min-width: 0;
 }
 
 .code-block {

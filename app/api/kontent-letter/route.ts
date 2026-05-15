@@ -1640,6 +1640,221 @@ function resolveComplaintTemplate(
   };
 }
 
+function resolveDebtorsPortalTemplate(
+  letterTypeItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  portalBrand: string,
+  letterType: string
+): { template: KontentItem | null; expectedTemplateCode?: string; error?: string; status?: number } {
+  const normalizedPortalBrand = normalizeCode(portalBrand);
+  const normalizedLetterType = normalizeCodeKey(letterType);
+
+  if (!letterType.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'letterType' for debtors letter code.",
+      status: 400,
+    };
+  }
+
+  if (!normalizedPortalBrand) {
+    return {
+      template: null,
+      error: "Missing required selector value 'portalBrand' for debtors letter code.",
+      status: 400,
+    };
+  }
+
+  const isPortalBrandYes = normalizedPortalBrand === "YES";
+  const isPortalBrandNo = normalizedPortalBrand === "NO";
+  const isActivePolicy = normalizedLetterType === "POLICYACTIVEPORTAL";
+  const isCancelledPolicy =
+    normalizedLetterType === "POLICYCANCELLEDPORTAL" ||
+    normalizedLetterType === "POLICYCANCELLATIONPENDINGPORTAL";
+
+  let expectedTemplateCode = "";
+
+  if (isPortalBrandYes && isActivePolicy) {
+    expectedTemplateCode = "active_policy_portal";
+  } else if (isPortalBrandYes && isCancelledPolicy) {
+    expectedTemplateCode = "cancel_policy_portal";
+  } else if (isPortalBrandNo && isActivePolicy) {
+    expectedTemplateCode = "active_policy_nonportal";
+  } else if (isPortalBrandNo && isCancelledPolicy) {
+    expectedTemplateCode = "cancel_policy_nonportal";
+  }
+
+  if (!expectedTemplateCode) {
+    return {
+      template: null,
+      error: `No debtors portal template mapping found for LetterType '${letterType}' and PortalBrand '${portalBrand}'.`,
+      status: 404,
+    };
+  }
+
+  const linkedTemplateCodenames = letterTypeItem
+    ? readLinkedTemplateCodenames(letterTypeItem.elements ?? {})
+    : [];
+
+  for (const codename of linkedTemplateCodenames) {
+    if (!matchesSelectorValueToCodename(expectedTemplateCode, codename)) {
+      continue;
+    }
+
+    const template = readTemplateByCodename(codename, allItems, modularContent);
+    if (template) {
+      return { template, expectedTemplateCode };
+    }
+  }
+
+  const allTemplateItems = [
+    ...Object.values(modularContent).filter((item) => item.system?.type === "letter_template"),
+    ...allItems.filter((item) => item.system?.type === "letter_template"),
+  ];
+
+  const fallbackTemplate = allTemplateItems.find((item) => {
+    const codename = readTextValue(item.system?.codename);
+    return codename.length > 0 && matchesSelectorValueToCodename(expectedTemplateCode, codename);
+  });
+
+  if (fallbackTemplate) {
+    return { template: fallbackTemplate, expectedTemplateCode };
+  }
+
+  return {
+    template: null,
+    expectedTemplateCode,
+    error:
+      `No debtors portal letter_template matched '${expectedTemplateCode}'. ` +
+      "Expected a letter_template codename matching the configured debtors portal logic.",
+    status: 404,
+  };
+}
+
+function resolveSingleDebtorsTemplate(
+  letterTypeItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  letterType: string,
+  portalBrand: string,
+  rejectionCount: string
+): { template: KontentItem | null; expectedTemplateCode?: string; error?: string; status?: number } {
+  if (portalBrand.trim() && letterType.trim()) {
+    const portalResult = resolveDebtorsPortalTemplate(
+      letterTypeItem,
+      allItems,
+      modularContent,
+      portalBrand,
+      letterType
+    );
+
+    if (portalResult.template || portalResult.status === 400) {
+      return portalResult;
+    }
+  }
+
+  const normalizedLetterType = normalizeCodeKey(letterType);
+  const normalizedRejectionCount = normalizeCodeKey(rejectionCount);
+  const parsedRejectionCount = parseInt(rejectionCount.replace(/\D/g, ""), 10);
+  const hasRejectionCount = normalizedRejectionCount.length > 0;
+
+  const isPremiumDebitType =
+    normalizedLetterType.includes("PREMIUM") && normalizedLetterType.includes("DEBIT");
+  const isSingleDebtorsType =
+    normalizedLetterType.includes("SINGLE") && normalizedLetterType.includes("DEBTOR");
+
+  if (!letterType.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'letterType' for letter code SINGLEDEBTORS.",
+      status: 400,
+    };
+  }
+
+  if (!isPremiumDebitType && !isSingleDebtorsType) {
+    return {
+      template: null,
+      error: `No SINGLEDEBTORS template mapping found for LetterType '${letterType}'.`,
+      status: 404,
+    };
+  }
+
+  let expectedTemplateCode = "";
+
+  if (isPremiumDebitType) {
+    expectedTemplateCode = hasRejectionCount ? "PREMIUM_DEBIT_REJECTED" : "PREMIUM_DEBIT";
+  } else if (isSingleDebtorsType) {
+    if (
+      parsedRejectionCount >= 6 ||
+      /6\+|6PLUS|6_OR_MORE|MORETHAN5/.test(normalizedRejectionCount)
+    ) {
+      expectedTemplateCode = "SINGLE_DEBTORS_REJECTED_6_PLUS";
+    } else if (
+      parsedRejectionCount >= 1 ||
+      /1TO5|1-5|ONE|TWO|THREE|FOUR|FIVE/.test(normalizedRejectionCount)
+    ) {
+      expectedTemplateCode = "SINGLE_DEBTORS_REJECTED_1_TO_5";
+    } else {
+      expectedTemplateCode = "SINGLE_DEBTORS";
+    }
+  }
+
+  const linkedTemplateCodenames = letterTypeItem
+    ? readLinkedTemplateCodenames(letterTypeItem.elements ?? {})
+    : [];
+
+  for (const codename of linkedTemplateCodenames) {
+    if (!matchesSelectorValueToCodename(expectedTemplateCode, codename)) {
+      continue;
+    }
+
+    const template = readTemplateByCodename(codename, allItems, modularContent);
+    if (template) {
+      return { template, expectedTemplateCode };
+    }
+  }
+
+  const allTemplateItems = [
+    ...Object.values(modularContent).filter((item) => item.system?.type === "letter_template"),
+    ...allItems.filter((item) => item.system?.type === "letter_template"),
+  ];
+
+  const fallbackTemplate = allTemplateItems.find((item) => {
+    const codename = readTextValue(item.system?.codename);
+    return codename.length > 0 && matchesSelectorValueToCodename(expectedTemplateCode, codename);
+  });
+
+  if (fallbackTemplate) {
+    return { template: fallbackTemplate, expectedTemplateCode };
+  }
+
+  return {
+    template: null,
+    expectedTemplateCode,
+    error:
+      `No SINGLEDEBTORS letter_template matched '${expectedTemplateCode}'. ` +
+      "Expected a letter_template codename matching the configured SINGLEDEBTORS logic.",
+    status: 404,
+  };
+}
+
+function resolveMultiDebtorsTemplate(
+  letterTypeItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  letterType: string,
+  portalBrand: string
+): { template: KontentItem | null; expectedTemplateCode?: string; error?: string; status?: number } {
+  return resolveDebtorsPortalTemplate(
+    letterTypeItem,
+    allItems,
+    modularContent,
+    portalBrand,
+    letterType
+  );
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const letterCode = searchParams.get("letterCode");
@@ -2325,6 +2540,72 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(complaintResult.template, items, modularContent, visibilityContext);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === "SINGLEDEBTORS") {
+      const letterType = searchParams.get("letterType") || "";
+      const portalBrand = searchParams.get("portalBrand") || "";
+      const rejectionCount = searchParams.get("rejectionCount") || "";
+
+      const singleDebtorsLetterType = findMatchingLetterTypeItem(items, letterCode);
+      const singleDebtorsResult = resolveSingleDebtorsTemplate(
+        singleDebtorsLetterType,
+        items,
+        modularContent,
+        letterType,
+        portalBrand,
+        rejectionCount
+      );
+
+      if (!singleDebtorsResult.template) {
+        return NextResponse.json(
+          {
+            error: singleDebtorsResult.error || "Unable to resolve SINGLEDEBTORS template.",
+          },
+          { status: singleDebtorsResult.status || 404 }
+        );
+      }
+
+      const content = extractContent(singleDebtorsResult.template, items, modularContent, visibilityContext);
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === "MULTIDEBTORS") {
+      const letterType = searchParams.get("letterType") || "";
+      const portalBrand = searchParams.get("portalBrand") || "";
+
+      const multiDebtorsLetterType = findMatchingLetterTypeItem(items, letterCode);
+      const multiDebtorsResult = resolveMultiDebtorsTemplate(
+        multiDebtorsLetterType,
+        items,
+        modularContent,
+        letterType,
+        portalBrand
+      );
+
+      if (!multiDebtorsResult.template) {
+        return NextResponse.json(
+          {
+            error: multiDebtorsResult.error || "Unable to resolve MULTIDEBTORS template.",
+          },
+          { status: multiDebtorsResult.status || 404 }
+        );
+      }
+
+      const content = extractContent(multiDebtorsResult.template, items, modularContent, visibilityContext);
       return NextResponse.json(
         {
           ...content,

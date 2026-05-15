@@ -1223,6 +1223,18 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "LetterReasonCode")
     : "";
 
+  const rejectionCount = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "RejectionCount") ||
+      findFirstStringValueByKey(filteredRecord, "Rejection_Count") ||
+      findFirstStringValueByKey(filteredRecord, "Rejection Count")
+    : "";
+
+  const portalBrand = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "PortalBrand") ||
+      findFirstStringValueByKey(filteredRecord, "Portal_Brand") ||
+      findFirstStringValueByKey(filteredRecord, "Portal Brand")
+    : "";
+
   // Visibility context values - extracted from XML for content block filtering
   const letterType = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "Letter_Type") ||
@@ -1388,8 +1400,12 @@ export default function Home() {
             params.set("letterType", renewalLetterType);
           }
 
-          if (renewalLetterReasonCode) {
-            params.set("letterReasonCode", renewalLetterReasonCode);
+          if (rejectionCount) {
+            params.set("rejectionCount", rejectionCount);
+          }
+
+          if (portalBrand) {
+            params.set("portalBrand", portalBrand);
           }
 
           if (isOtherAssetsEligibleCode && effectiveOtherAssetsCodename) {
@@ -1696,7 +1712,7 @@ export default function Home() {
           )}
 
           {cmsNoticeMessage && !cmsErrorMessage && (
-            <p className="status status--notice" style={{ color: cmsFrameMutedTextColor, textAlign: "left", alignSelf: "flex-start" }}>
+            <p className="status status--notice" style={{ color: "#6b7280", textAlign: "left", alignSelf: "flex-start" }}>
               {cmsNoticeMessage}
             </p>
           )}
