@@ -609,6 +609,7 @@ export default function Home() {
   const [currentIndex, setCurrentIndex] = useState(0);
   // letterCodeFilter is set by the dropdown; empty string means "show all".
   const [letterCodeFilter, setLetterCodeFilter] = useState("");
+  const [letterTemplateFilter, setLetterTemplateFilter] = useState("");
   const [cmsLoading, setCmsLoading] = useState(false);
   const [cmsErrorMessage, setCmsErrorMessage] = useState<string | null>(null);
   const [cmsNoticeMessage, setCmsNoticeMessage] = useState<string | null>(null);
@@ -643,7 +644,7 @@ export default function Home() {
 
     const attributeObject: XmlObject = {};
     for (const attribute of attributes) {
-      const attrName = attribute.name.trim();
+      const attrName = (attribute.localName || attribute.name).trim();
       if (!attrName) continue;
       attributeObject[attrName] = attribute.value ?? "";
     }
@@ -669,7 +670,7 @@ export default function Home() {
     }
 
     for (const child of childElements) {
-      const key = child.tagName;
+      const key = child.localName || child.tagName;
       const value = elementToObject(child);
       const normalizedValue =
         Object.keys(value).length === 1 && "value" in value ? value.value : value;
@@ -692,15 +693,39 @@ export default function Home() {
   const findRecordElements = (xmlDoc: Document): Element[] => {
     const allElements = Array.from(xmlDoc.getElementsByTagName("*"));
 
+    const letterCandidates = allElements.filter((el) => {
+      const localName = (el.localName || el.tagName).toLowerCase();
+      if (localName !== "letter" && !localName.endsWith("letter")) {
+        return false;
+      }
+
+      return Array.from(el.getElementsByTagName("*")).some((child) => {
+        const childName = child.localName || child.tagName;
+        return childName === "Letter_Code_" || childName === "Letter_Code";
+      });
+    });
+
+    if (letterCandidates.length > 0) {
+      const leafCandidates = letterCandidates.filter((candidate) =>
+        !letterCandidates.some(
+          (other) =>
+            other !== candidate &&
+            candidate.contains(other)
+        )
+      );
+
+      return leafCandidates.length > 0 ? leafCandidates : letterCandidates;
+    }
+
     let bestParent: Element | null = null;
     let bestTag = "";
     let bestCount = 0;
 
     for (const el of allElements) {
-      // Count repeated tag names among this element's direct children.
       const tagCounts = new Map<string, number>();
       for (const child of Array.from(el.children)) {
-        tagCounts.set(child.tagName, (tagCounts.get(child.tagName) ?? 0) + 1);
+        const childName = child.localName || child.tagName;
+        tagCounts.set(childName, (tagCounts.get(childName) ?? 0) + 1);
       }
       for (const [tag, count] of tagCounts.entries()) {
         if (count > bestCount) {
@@ -713,8 +738,19 @@ export default function Home() {
 
     if (bestParent && bestTag) {
       return Array.from(bestParent.children).filter(
-        (el) => el.tagName === bestTag
+        (el) => (el.localName || el.tagName) === bestTag
       );
+    }
+
+    const letterCodeCandidates = allElements.filter((el) =>
+      Array.from(el.children).some((child) => {
+        const childName = child.localName || child.tagName;
+        return childName === "Letter_Code_" || childName === "Letter_Code";
+      })
+    );
+
+    if (letterCodeCandidates.length > 0) {
+      return letterCodeCandidates;
     }
 
     return Array.from(xmlDoc.documentElement.children);
@@ -769,10 +805,16 @@ export default function Home() {
           ...elementToObject(element),
         };
 
-        // When Letter_Code_ is absent or empty, fall back to the first child element
-        // name inside Letter_Data (e.g. "SingleDebtors", "AdHocPayment").
+        // When Letter_Code_ is absent or empty, look recursively for Letter_Code_ anywhere in the record.
         let resolvedCode =
           typeof obj["Letter_Code_"] === "string" ? obj["Letter_Code_"].trim() : "";
+
+        if (!resolvedCode) {
+          resolvedCode =
+            findFirstStringValueByKey(obj, "Letter_Code_") ||
+            findFirstStringValueByKey(obj, "LetterCode") ||
+            findFirstStringValueByKey(obj, "Letter Code");
+        }
 
         if (!resolvedCode) {
           const letterData = obj["Letter_Data"];
@@ -808,6 +850,187 @@ export default function Home() {
     }
   };
 
+  const isNullLikeValue = (value: string): boolean => {
+    const normalized = normalizeFieldKey(value);
+    return !normalized || normalized === "null" || normalized === "none" || normalized === "na";
+  };
+
+  const isYesValue = (value: string): boolean => {
+    const normalized = normalizeFieldKey(value);
+    return normalized === "yes" || normalized === "y" || normalized === "true" || normalized === "1";
+  };
+
+  const resolveRenewalTemplateName = (record: XmlObject): string => {
+    const letterType =
+      findFirstStringValueByKey(record, "Letter_Type") ||
+      findFirstStringValueByKey(record, "LetterType");
+    const letterReasonCode =
+      findFirstStringValueByKey(record, "LetterReasonCode") ||
+      findFirstStringValueByKey(record, "LetterReason") ||
+      findFirstStringValueByKey(record, "LetterReasonCode_");
+
+    const normalizedType = normalizeFieldKey(letterType);
+    const normalizedReason = normalizeFieldKey(letterReasonCode);
+
+    if (normalizedType === "standard") {
+      if (normalizedReason === "nor") {
+        return "AUTO RENEWAL";
+      }
+      if (normalizedReason === "for") {
+        return "AUTO RENEWAL - FORCED";
+      }
+    }
+
+    if (normalizedType === "renewaloffer" || normalizedType === "offer") {
+      if (normalizedReason === "nor") {
+        return "RENEWAL OFFER";
+      }
+      if (normalizedReason === "for") {
+        return "RENEWAL OFFER - FORCED";
+      }
+    }
+
+    if (normalizedType === "renewalaccepted" || normalizedType === "acceptance") {
+      return "RENEWAL ACCEPTANCE";
+    }
+
+    return "";
+  };
+
+  const getClWaiverTemplateName = (record: XmlObject): string => {
+    return findFirstStringValueByKey(record, "WaiverOutcome").trim();
+  };
+
+  const getCancelTemplateName = (record: XmlObject): string => {
+    const cancellationReason = findFirstStringValueByKey(record, "CancellationReason");
+    const cancelWithCoolingPeriod =
+      findFirstStringValueByKey(record, "CancelWithCoolingPeriod") ||
+      findFirstStringValueByKey(record, "CancelWithinCoolingPeriod");
+    const cxPremiumDueDate = findFirstStringValueByKey(record, "CXPremiumDueDate");
+
+    const normalizedReason = normalizeFieldKey(cancellationReason);
+    const prefixMap: Record<string, string> = {
+      petdied: "PET_DIED",
+      petmissing: "PET_MISSING",
+      other: "OTHER",
+    };
+
+    if (normalizedReason in prefixMap) {
+      const prefix = prefixMap[normalizedReason];
+      if (isYesValue(cancelWithCoolingPeriod)) {
+        return `${prefix}_COOLING_OFF_PERIOD`;
+      }
+      if (isNullLikeValue(cxPremiumDueDate)) {
+        return `${prefix}_NO_PREMIUM_DUE`;
+      }
+      return `${prefix}_PREMIUM_DUE`;
+    }
+
+    const directReasonMap: Record<string, string> = {
+      nonpayment: "NON_PAYMENTS",
+      policyinissued: "POLICY_IN_ISSUED",
+      renewallapsed: "RENEWAL_LAPSED",
+      renewalcancelledannual: "RENEWAL_CANCELLED_ANNUAL",
+      renewalcancelledinstalment: "RENEWAL_CANCELLED_INSTALMENT",
+    };
+
+    return directReasonMap[normalizedReason] || "";
+  };
+
+  const getComplaintTemplateName = (record: XmlObject): string => {
+    const taskSubcategoryCode = findFirstStringValueByKey(record, "TaskSubcategoryCode");
+    const upmTrigger =
+      findFirstStringValueByKey(record, "UPMTrigger") ||
+      findFirstStringValueByKey(record, "UPMTriger");
+    const idrDelayReason = findFirstStringValueByKey(record, "IDRDelayReason");
+
+    const normalizedTask = normalizeFieldKey(taskSubcategoryCode);
+    const isCstComplaint = normalizedTask === "scat0314" || normalizedTask === "scat0117";
+    const prefix = isCstComplaint ? "CST" : "IDR";
+    const normalizedTrigger = normalizeFieldKey(upmTrigger);
+
+    if (normalizedTrigger === "followup") {
+      return `${prefix}_FOLLOWUP`;
+    }
+
+    if (normalizedTrigger === "delayed") {
+      const delayReasonMap: Record<string, string> = {
+        complaintnonresponse: "COMPLAINT",
+        complexcase: "COMPLEX",
+        highcomplaintvolumes: "HIGH",
+        informationrequiredfromthirdparty: "INFORMATION",
+      };
+      const suffix = delayReasonMap[normalizeFieldKey(idrDelayReason)];
+      return suffix ? `${prefix}_${suffix}` : "";
+    }
+
+    return "";
+  };
+
+  const getEndorsementTemplateName = (record: XmlObject): string => {
+    const autoRenewal = findFirstStringValueByKey(record, "Auto-Renewal");
+    const normalizedValue = normalizeFieldKey(autoRenewal);
+
+    if (normalizedValue === "nor") {
+      return "AUTO RENEWAL";
+    }
+    if (normalizedValue === "for") {
+      return "AUTO RENEWAL - FORCED";
+    }
+
+    return autoRenewal.trim();
+  };
+
+  const getTemplateVariantValue = (record: XmlObject): string => {
+    const candidateKeys = [
+      "Letter_Template",
+      "LetterTemplate",
+      "Template",
+      "Letter_Template_Name",
+      "LetterTemplateName",
+      "TemplateName",
+    ];
+
+    for (const key of candidateKeys) {
+      const value = findFirstStringValueByKey(record, key).trim();
+      if (value) {
+        return value;
+      }
+    }
+
+    const letterCode =
+      typeof record["Letter_Code_"] === "string"
+        ? record["Letter_Code_"].trim().toUpperCase()
+        : "";
+
+    if (letterCode === "RENEWAL") {
+      const resolvedName = resolveRenewalTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "CLWAIVER") {
+      const resolvedName = getClWaiverTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "CANCEL") {
+      const resolvedName = getCancelTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "COMPLAINT") {
+      const resolvedName = getComplaintTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "ENDORSEMENT") {
+      const resolvedName = getEndorsementTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    return letterCode;
+  };
+
   // Collect unique Letter_Code_ values from all loaded records for the filter dropdown.
   const letterCodes = Array.from(
     new Set(
@@ -820,14 +1043,50 @@ export default function Home() {
     )
   ).sort();
 
-  // Apply dropdown filter; when no filter is selected show all records.
-  const filteredRecords =
-    letterCodeFilter
-      ? records.filter((r) => {
-          const v = r["Letter_Code_"];
-          return typeof v === "string" && v.trim() === letterCodeFilter;
+  const letterTemplates = Array.from(
+    new Set(
+      records
+        .filter((record) => {
+          const letterCode =
+            typeof record["Letter_Code_"] === "string"
+              ? record["Letter_Code_"].trim()
+              : "";
+
+          return !letterCodeFilter || letterCode === letterCodeFilter;
         })
-      : records;
+        .map((record) => getTemplateVariantValue(record))
+        .filter(Boolean)
+    )
+  ).sort();
+
+  const filteredRecords = records.filter((record) => {
+    const letterCode =
+      typeof record["Letter_Code_"] === "string"
+        ? record["Letter_Code_"].trim()
+        : "";
+
+    if (letterCodeFilter && letterCode !== letterCodeFilter) {
+      return false;
+    }
+
+    const templateValue = getTemplateVariantValue(record);
+    if (letterTemplateFilter && templateValue !== letterTemplateFilter) {
+      return false;
+    }
+
+    return true;
+  });
+
+  useEffect(() => {
+    if (filteredRecords.length === 0) {
+      setCurrentIndex(0);
+      return;
+    }
+
+    if (currentIndex >= filteredRecords.length) {
+      setCurrentIndex(filteredRecords.length - 1);
+    }
+  }, [filteredRecords.length, currentIndex]);
 
   const filteredRecord = filteredRecords[currentIndex] ?? null;
   const currentLetterCode =
@@ -838,11 +1097,11 @@ export default function Home() {
   const isOtherAssetsEligibleCode =
     currentLetterCodeKey === "COI" || currentLetterCodeKey === "RENEWAL";
 
-  const normalizeFieldKey = (value: string): string => {
+  function normalizeFieldKey(value: string): string {
     return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-  };
+  }
 
-  const findFirstStringValueByKey = (obj: unknown, key: string): string => {
+  function findFirstStringValueByKey(obj: unknown, key: string): string {
     if (obj === null || obj === undefined) {
       return "";
     }
@@ -1569,6 +1828,7 @@ export default function Home() {
                 value={letterCodeFilter}
                 onChange={(event) => {
                   setLetterCodeFilter(event.target.value);
+                  setLetterTemplateFilter("");
                   setCurrentIndex(0);
                 }}
                 className="select"
@@ -1578,6 +1838,30 @@ export default function Home() {
                   <option key={code} value={code}>
                     {code} (
                     {records.filter((r) => r["Letter_Code_"] === code).length})
+                  </option>
+                ))}
+              </select>
+            </section>
+          )}
+
+          {letterTemplates.length > 0 && (
+            <section className="nav-row">
+              <label htmlFor="letter-template-filter" className="field__label">
+                Filter by Letter Template:
+              </label>
+              <select
+                id="letter-template-filter"
+                value={letterTemplateFilter}
+                onChange={(event) => {
+                  setLetterTemplateFilter(event.target.value);
+                  setCurrentIndex(0);
+                }}
+                className="select"
+              >
+                <option value="">All Templates ({letterTemplates.length})</option>
+                {letterTemplates.map((template) => (
+                  <option key={template} value={template}>
+                    {template}
                   </option>
                 ))}
               </select>
@@ -1645,16 +1929,27 @@ export default function Home() {
               </div>
 
               {/* Letter_Data content: schema varies per Letter_Code_ */}
-              {"Letter_Data" in filteredRecord && (
-                <>
-                  <h4 className="panel__title" style={{ marginTop: 0, marginBottom: "0.4rem", fontSize: "0.95rem" }}>
-                    Letter Data
-                  </h4>
-                  <pre className="code-block code-block--letter-data">
-                    {JSON.stringify(filteredRecord["Letter_Data"], null, 2)}
-                  </pre>
-                </>
-              )}
+              {(() => {
+                const letterData =
+                  "Letter_Data" in filteredRecord
+                    ? filteredRecord["Letter_Data"]
+                    : filteredRecord;
+
+                if (letterData === null || typeof letterData !== "object") {
+                  return null;
+                }
+
+                return (
+                  <>
+                    <h4 className="panel__title" style={{ marginTop: 0, marginBottom: "0.4rem", fontSize: "0.95rem" }}>
+                      Letter Data
+                    </h4>
+                    <pre className="code-block code-block--letter-data">
+                      {JSON.stringify(letterData, null, 2)}
+                    </pre>
+                  </>
+                );
+              })()}
               </section>
             )}
             </div>
