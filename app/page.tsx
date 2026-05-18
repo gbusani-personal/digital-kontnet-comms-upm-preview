@@ -1110,10 +1110,23 @@ export default function Home() {
       return value;
     }
 
-    const letterCode =
-      typeof record["Letter_Code_"] === "string"
-        ? record["Letter_Code_"].trim().toUpperCase()
-        : "";
+    const letterCode = (() => {
+      const explicitCode =
+        typeof record["Letter_Code_"] === "string" && record["Letter_Code_"].trim()
+          ? record["Letter_Code_"].trim().toUpperCase()
+          : "";
+
+      if (explicitCode) {
+        return explicitCode;
+      }
+
+      const nodeName =
+        typeof record.nodeName === "string" && record.nodeName.trim()
+          ? record.nodeName.trim().toUpperCase()
+          : "";
+
+      return nodeName;
+    })();
 
     if (letterCode === "RENEWAL") {
       const resolvedName = resolveRenewalTemplateName(record);
@@ -2015,7 +2028,7 @@ export default function Home() {
                 <option value="">All Templates ({letterTemplates.length})</option>
                 {letterTemplates.map((template) => (
                   <option key={template} value={template}>
-                    {getTemplateDisplayName(template)}
+                    {template}
                   </option>
                 ))}
               </select>
