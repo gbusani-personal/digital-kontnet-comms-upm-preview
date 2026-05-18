@@ -39,20 +39,8 @@ const ENCODED_PLACEHOLDER_PATTERN = /&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123
 const URL_ENCODED_PLACEHOLDER_PATTERN = /%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
 const ANY_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;|%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
 
-const PLACEHOLDER_ALIASES: Record<string, string[]> = {
-  fullpolicyno: ["fullpolicynumber", "policyno", "policynumber"],
-  fullpolicynumber: ["fullpolicyno", "policyno", "policynumber"],
-  policyno: ["policynumber", "fullpolicyno", "fullpolicynumber"],
-  policyholder: ["policyholdername", "policy_holder", "policyholder_name"],
-  customername: ["customer", "fullname", "name"],
-};
-
 function normalizeLookupKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-}
-
-function normalizeLookupKeyVariant(value: string): string {
-  return normalizeLookupKey(value).replace(/number/g, "no");
 }
 
 function normalizeHexColor(value?: string): string | null {
@@ -143,14 +131,9 @@ function addLookupValue(map: Map<string, string>, key: string, value: string) {
   if (!trimmed) return;
 
   const normalized = normalizeLookupKey(key);
-  const variant = normalizeLookupKeyVariant(key);
 
   if (normalized && !map.has(normalized)) {
     map.set(normalized, trimmed);
-  }
-
-  if (variant && !map.has(variant)) {
-    map.set(variant, trimmed);
   }
 }
 
@@ -196,34 +179,7 @@ function buildXmlValueLookup(record: unknown): Map<string, string> {
 
 function resolvePlaceholderValue(token: string, lookup: Map<string, string>): string | null {
   const normalizedToken = normalizeLookupKey(token);
-  const normalizedTokenVariant = normalizeLookupKeyVariant(token);
-
-  const directMatch =
-    lookup.get(normalizedToken) ||
-    lookup.get(normalizedTokenVariant);
-
-  if (directMatch) {
-    return directMatch;
-  }
-
-  const aliases = PLACEHOLDER_ALIASES[normalizedToken] || [];
-  for (const alias of aliases) {
-    const aliasValue = lookup.get(normalizeLookupKey(alias)) || lookup.get(normalizeLookupKeyVariant(alias));
-    if (aliasValue) {
-      return aliasValue;
-    }
-  }
-
-  // Fuzzy fallback for small naming drifts, e.g. FullPolicyNo <-> FullPolicyNumber.
-  if (normalizedToken.length >= 5) {
-    for (const [key, value] of lookup.entries()) {
-      if (key.includes(normalizedToken) || normalizedToken.includes(key)) {
-        return value;
-      }
-    }
-  }
-
-  return null;
+  return lookup.get(normalizedToken) || null;
 }
 
 const BRAND_PARTNER_ONLY_PLACEHOLDERS = new Set([
@@ -347,6 +303,7 @@ function replaceCmsPlaceholders(
         String(match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
 
       const resolvedValue = token ? resolveTokenValue(token) : null;
+      const isUnresolvedPlaceholder = resolvedValue === null;
 
       if (showResolvedValues && resolvedValue !== null) {
         if (highlightPlaceholders) {
@@ -357,6 +314,12 @@ function replaceCmsPlaceholders(
         } else {
           fragment.appendChild(htmlDoc.createTextNode(resolvedValue));
         }
+        hasReplacement = true;
+      } else if (isUnresolvedPlaceholder) {
+        const missingSpan = htmlDoc.createElement("span");
+        missingSpan.className = "cms-placeholder-missing";
+        missingSpan.textContent = fullMatch;
+        fragment.appendChild(missingSpan);
         hasReplacement = true;
       } else if (!showResolvedValues) {
         if (highlightPlaceholders) {
