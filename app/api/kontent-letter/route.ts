@@ -912,7 +912,8 @@ function resolveRenewalTemplate(
   allItems: KontentItem[],
   modularContent: Record<string, KontentItem>,
   letterType: string,
-  letterReasonCode: string
+  letterReasonCode: string,
+  clientNumberType: string
 ): { template: KontentItem | null; matchedLetterType?: KontentItem | null; expectedTemplateName?: string; error?: string; status?: number } {
   if (!letterType.trim()) {
     return {
@@ -936,7 +937,15 @@ function resolveRenewalTemplate(
       };
     }
     if (normalizedReasonCode === "NOR") {
-      expectedTemplateName = "AUTO RENEWAL";
+      // Allow client number group to refine the AUTO RENEWAL variant
+      const normalizedClient = normalizeCodeKey(clientNumberType);
+      if (normalizedClient === "BUPAMEMBER") {
+        expectedTemplateName = "AUTO RENEWAL - MEMBER";
+      } else if (normalizedClient === "BUPASTAFF") {
+        expectedTemplateName = "AUTO RENEWAL - STAFF";
+      } else {
+        expectedTemplateName = "AUTO RENEWAL";
+      }
     } else if (normalizedReasonCode === "FOR") {
       expectedTemplateName = "AUTO RENEWAL - FORCED";
     }
@@ -1757,12 +1766,6 @@ function resolveSingleDebtorsTemplate(
   const normalizedLetterType = normalizeCodeKey(letterType);
   const normalizedRejectionCount = normalizeCodeKey(rejectionCount);
   const parsedRejectionCount = parseInt(rejectionCount.replace(/\D/g, ""), 10);
-  const hasRejectionCount = normalizedRejectionCount.length > 0;
-
-  const isPremiumDebitType =
-    normalizedLetterType.includes("PREMIUM") && normalizedLetterType.includes("DEBIT");
-  const isSingleDebtorsType =
-    normalizedLetterType.includes("SINGLE") && normalizedLetterType.includes("DEBTOR");
 
   if (!letterType.trim()) {
     return {
@@ -1772,32 +1775,48 @@ function resolveSingleDebtorsTemplate(
     };
   }
 
-  if (!isPremiumDebitType && !isSingleDebtorsType) {
+  if (!rejectionCount.trim()) {
+    return {
+      template: null,
+      error: "Missing required selector value 'rejectionCount' for SINGLEDEBTORS letterType.",
+      status: 400,
+    };
+  }
+
+  // Determine rejection level
+  const rejectionLevel = parsedRejectionCount >= 2 ? "second" : "first";
+
+  // Determine if it's active or cancel policy
+  const isActivePolicyPortal = normalizedLetterType.includes("POLICYACTIVE_PORTAL");
+  const isCancelPolicyPortal =
+    normalizedLetterType.includes("POLICYCANCELLED_PORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLATIONPENDING_PORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLEDBYENDORSEMENT_PORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLEDBYFIX_PORTAL");
+
+  const isActivePolicyNonportal = normalizedLetterType.includes("POLICYACTIVE_NONPORTAL");
+  const isCancelPolicyNonportal =
+    normalizedLetterType.includes("POLICYCANCELLED_NONPORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLATIONPENDING_NONPORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLEDBYENDORSEMENT_NONPORTAL") ||
+    normalizedLetterType.includes("POLICYCANCELLEDBYFIX_NONPORTAL");
+
+  let expectedTemplateCode = "";
+
+  if (isActivePolicyPortal) {
+    expectedTemplateCode = `${rejectionLevel}_rejection_active_policy_portal`;
+  } else if (isCancelPolicyPortal) {
+    expectedTemplateCode = `${rejectionLevel}_rejection_cancel_policy_portal`;
+  } else if (isActivePolicyNonportal) {
+    expectedTemplateCode = `${rejectionLevel}_rejection_active_policy_nonportal`;
+  } else if (isCancelPolicyNonportal) {
+    expectedTemplateCode = `${rejectionLevel}_rejection_cancel_policy_nonportal`;
+  } else {
     return {
       template: null,
       error: `No SINGLEDEBTORS template mapping found for LetterType '${letterType}'.`,
       status: 404,
     };
-  }
-
-  let expectedTemplateCode = "";
-
-  if (isPremiumDebitType) {
-    expectedTemplateCode = hasRejectionCount ? "PREMIUM_DEBIT_REJECTED" : "PREMIUM_DEBIT";
-  } else if (isSingleDebtorsType) {
-    if (
-      parsedRejectionCount >= 6 ||
-      /6\+|6PLUS|6_OR_MORE|MORETHAN5/.test(normalizedRejectionCount)
-    ) {
-      expectedTemplateCode = "SINGLE_DEBTORS_REJECTED_6_PLUS";
-    } else if (
-      parsedRejectionCount >= 1 ||
-      /1TO5|1-5|ONE|TWO|THREE|FOUR|FIVE/.test(normalizedRejectionCount)
-    ) {
-      expectedTemplateCode = "SINGLE_DEBTORS_REJECTED_1_TO_5";
-    } else {
-      expectedTemplateCode = "SINGLE_DEBTORS";
-    }
   }
 
   const linkedTemplateCodenames = letterTypeItem
@@ -2300,12 +2319,15 @@ export async function GET(request: Request) {
         );
       }
 
+      const renewalClientNumberType = searchParams.get("clientNumberType") || "";
+
       const renewalResult = resolveRenewalTemplate(
         partnerLetterTypeItems,
         combinedItems,
         combinedModularContent,
         renewalLetterType,
-        renewalLetterReasonCode
+        renewalLetterReasonCode,
+        renewalClientNumberType
       );
 
       if (!renewalResult.template) {

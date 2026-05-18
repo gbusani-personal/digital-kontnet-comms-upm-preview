@@ -868,12 +868,24 @@ export default function Home() {
       findFirstStringValueByKey(record, "LetterReasonCode") ||
       findFirstStringValueByKey(record, "LetterReason") ||
       findFirstStringValueByKey(record, "LetterReasonCode_");
+    const clientNumberType =
+      findFirstStringValueByKey(record, "ClientNumberGroup.ClientNumberType") ||
+      findFirstStringValueByKey(record, "ClientNumberType");
 
     const normalizedType = normalizeFieldKey(letterType);
     const normalizedReason = normalizeFieldKey(letterReasonCode);
+    const normalizedClientType = normalizeFieldKey(clientNumberType);
 
     if (normalizedType === "standard") {
       if (normalizedReason === "nor") {
+        // Check for ClientNumberGroup variants first
+        if (normalizedClientType === "bupamember") {
+          return "AUTO RENEWAL - MEMBER";
+        }
+        if (normalizedClientType === "bupastaff") {
+          return "AUTO RENEWAL - STAFF";
+        }
+        // Default to standard AUTO RENEWAL
         return "AUTO RENEWAL";
       }
       if (normalizedReason === "for") {
@@ -981,6 +993,95 @@ export default function Home() {
     return autoRenewal.trim();
   };
 
+  const getSingleDebtorsTemplateName = (record: XmlObject): string => {
+    const letterType = findFirstStringValueByKey(record, "Letter_Type") ||
+      findFirstStringValueByKey(record, "LetterType");
+    const rejectionCount = findFirstStringValueByKey(record, "RejectionCount") ||
+      findFirstStringValueByKey(record, "Rejection_Count") ||
+      findFirstStringValueByKey(record, "Rejection Count");
+
+    if (!letterType.trim() || !rejectionCount.trim()) {
+      return "";
+    }
+
+    const normalizedLetterType = normalizeFieldKey(letterType);
+    const parsedRejectionCount = parseInt(rejectionCount.replace(/\D/g, ""), 10);
+    const rejectionLevel = parsedRejectionCount >= 2 ? "second" : "first";
+
+    const isActivePolicyPortal = normalizedLetterType.includes("policyactiveportal");
+    const isCancelPolicyPortal =
+      normalizedLetterType.includes("policycancelledportal") ||
+      normalizedLetterType.includes("policycancellationpendingportal") ||
+      normalizedLetterType.includes("policycancelledbyendorsementportal") ||
+      normalizedLetterType.includes("policycancelledbyfixitportal");
+
+    const isActivePolicyNonportal = normalizedLetterType.includes("policyactivenonportal");
+    const isCancelPolicyNonportal =
+      normalizedLetterType.includes("policycancellednonportal") ||
+      normalizedLetterType.includes("policycancellationpendingnonportal") ||
+      normalizedLetterType.includes("policycancelledbyendorsementnonportal") ||
+      normalizedLetterType.includes("policycancelledbyfixitnonportal");
+
+    if (isActivePolicyPortal) {
+      return `${rejectionLevel}_rejection_active_policy_portal`;
+    } else if (isCancelPolicyPortal) {
+      return `${rejectionLevel}_rejection_cancel_policy_portal`;
+    } else if (isActivePolicyNonportal) {
+      return `${rejectionLevel}_rejection_active_policy_nonportal`;
+    } else if (isCancelPolicyNonportal) {
+      return `${rejectionLevel}_rejection_cancel_policy_nonportal`;
+    }
+
+    return "";
+  };
+
+  const getMultiDebtorsTemplateName = (record: XmlObject): string => {
+    const letterType = findFirstStringValueByKey(record, "Letter_Type") ||
+      findFirstStringValueByKey(record, "LetterType");
+
+    if (!letterType.trim()) {
+      return "";
+    }
+
+    const normalizedLetterType = normalizeFieldKey(letterType);
+
+    const isActivePolicyPortal = normalizedLetterType.includes("policyactiveportal");
+    const isCancelPolicyPortal =
+      normalizedLetterType.includes("policycancelledportal") ||
+      normalizedLetterType.includes("policycancellationpendingportal") ||
+      normalizedLetterType.includes("policycancelledbyendorsementportal") ||
+      normalizedLetterType.includes("policycancelledbyfixitportal");
+
+    const isActivePolicyNonportal = normalizedLetterType.includes("policyactivenonportal");
+    const isCancelPolicyNonportal =
+      normalizedLetterType.includes("policycancellednonportal") ||
+      normalizedLetterType.includes("policycancellationpendingnonportal") ||
+      normalizedLetterType.includes("policycancelledbyendorsementnonportal") ||
+      normalizedLetterType.includes("policycancelledbyfixitnonportal");
+
+    if (isActivePolicyPortal) {
+      return "active_policy_portal";
+    } else if (isCancelPolicyPortal) {
+      return "cancel_policy_portal";
+    } else if (isActivePolicyNonportal) {
+      return "active_policy_nonportal";
+    } else if (isCancelPolicyNonportal) {
+      return "cancel_policy_nonportal";
+    }
+
+    return "";
+  };
+
+  const getTemplateDisplayName = (templateCodename: string): string => {
+    // Convert codenames like "first_rejection_active_policy_portal" to "First Rejection Active Policy - Portal"
+    return templateCodename
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(" ")
+      .replace(/Portal$/, "- Portal")
+      .replace(/Nonportal$/, "- Non-Portal");
+  };
+
   const getTemplateVariantValue = (record: XmlObject): string => {
     const candidateKeys = [
       "Letter_Template",
@@ -993,9 +1094,20 @@ export default function Home() {
 
     for (const key of candidateKeys) {
       const value = findFirstStringValueByKey(record, key).trim();
-      if (value) {
-        return value;
+      if (!value) {
+        continue;
       }
+
+      const letterCode =
+        typeof record["Letter_Code_"] === "string"
+          ? record["Letter_Code_"].trim().toUpperCase()
+          : "";
+
+      if (letterCode && normalizeFieldKey(value) === normalizeFieldKey(letterCode)) {
+        continue;
+      }
+
+      return value;
     }
 
     const letterCode =
@@ -1025,6 +1137,16 @@ export default function Home() {
 
     if (letterCode === "ENDORSEMENT") {
       const resolvedName = getEndorsementTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "SINGLEDEBTORS") {
+      const resolvedName = getSingleDebtorsTemplateName(record);
+      return resolvedName || letterCode;
+    }
+
+    if (letterCode === "MULTIDEBTORS") {
+      const resolvedName = getMultiDebtorsTemplateName(record);
       return resolvedName || letterCode;
     }
 
@@ -1223,6 +1345,11 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "LetterReasonCode")
     : "";
 
+  const clientNumberType = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "ClientNumberGroup.ClientNumberType") ||
+      findFirstStringValueByKey(filteredRecord, "ClientNumberType")
+    : "";
+
   const rejectionCount = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "RejectionCount") ||
       findFirstStringValueByKey(filteredRecord, "Rejection_Count") ||
@@ -1398,6 +1525,16 @@ export default function Home() {
 
           if (renewalLetterType) {
             params.set("letterType", renewalLetterType);
+          } else if (letterType) {
+            params.set("letterType", letterType);
+          }
+
+          if (renewalLetterReasonCode) {
+            params.set("letterReasonCode", renewalLetterReasonCode);
+          }
+
+          if (clientNumberType) {
+            params.set("clientNumberType", clientNumberType);
           }
 
           if (rejectionCount) {
@@ -1559,6 +1696,7 @@ export default function Home() {
     idrDelayReason,
     renewalLetterType,
     renewalLetterReasonCode,
+    clientNumberType,
     selectedOtherAssetsCodename,
     isOtherAssetsEligibleCode,
     letterType,
@@ -1877,7 +2015,7 @@ export default function Home() {
                 <option value="">All Templates ({letterTemplates.length})</option>
                 {letterTemplates.map((template) => (
                   <option key={template} value={template}>
-                    {template}
+                    {getTemplateDisplayName(template)}
                   </option>
                 ))}
               </select>
