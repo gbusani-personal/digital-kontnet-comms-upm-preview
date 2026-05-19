@@ -34,10 +34,10 @@ type OtherAssetsOption = {
   name: string;
 };
 
-const RAW_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}/g;
+const RAW_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|\|\|\s*([^|]+?)\s*\|\|/g;
 const ENCODED_PLACEHOLDER_PATTERN = /&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;/g;
 const URL_ENCODED_PLACEHOLDER_PATTERN = /%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
-const ANY_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;|%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
+const ANY_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|\|\|\s*([^|]+?)\s*\|\||&lt;&lt;\s*([^<>]+?)\s*&gt;&gt;|&#123;&#123;\s*([^{}]+?)\s*&#125;&#125;|%3C%3C\s*([^%]+?)\s*%3E%3E|%7B%7B\s*([^%]+?)\s*%7D%7D/gi;
 
 function normalizeLookupKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -177,6 +177,296 @@ function buildXmlValueLookup(record: unknown): Map<string, string> {
   return lookup;
 }
 
+function findFirstStringValueByKeyInObject(obj: unknown, key: string): string {
+  if (obj === null || obj === undefined) {
+    return "";
+  }
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findFirstStringValueByKeyInObject(item, key);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  if (typeof obj !== "object") {
+    return "";
+  }
+
+  const record = obj as Record<string, unknown>;
+  const targetKey = normalizeLookupKey(key);
+
+  const exactValue = record[key];
+  const exactString = typeof exactValue === "string" ? exactValue.trim() : "";
+  if (exactString) {
+    return exactString;
+  }
+
+  for (const [recordKey, recordValue] of Object.entries(record)) {
+    if (normalizeLookupKey(recordKey) === targetKey) {
+      const candidate = typeof recordValue === "string" ? recordValue.trim() : "";
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+
+  for (const value of Object.values(record)) {
+    const found = findFirstStringValueByKeyInObject(value, key);
+    if (found) return found;
+  }
+
+  return "";
+}
+
+function findDirectStringValueByKey(obj: Record<string, unknown>, key: string): string {
+  const targetKey = normalizeLookupKey(key);
+
+  const exactValue = obj[key];
+  const exactString = typeof exactValue === "string" ? exactValue.trim() : "";
+  if (exactString) {
+    return exactString;
+  }
+
+  for (const [recordKey, recordValue] of Object.entries(obj)) {
+    if (normalizeLookupKey(recordKey) === targetKey) {
+      const candidate = typeof recordValue === "string" ? recordValue.trim() : "";
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+
+  return "";
+}
+
+function resolveCalculatedPlaceholderValue(token: string, record: unknown): string | null {
+  const normalizedToken = normalizeLookupKey(token);
+
+  if (normalizedToken === "totaldiscountamount") {
+    return computeLoadingTotal(record, "discount");
+  }
+
+  if (normalizedToken === "totalpromotionamount") {
+    return computeLoadingTotal(record, "promotion");
+  }
+
+  return null;
+}
+
+function isDiscountLoadingCode(loadingCode: string): boolean {
+  return normalizeLookupKey(loadingCode).toUpperCase() === "DISCOUNT";
+}
+
+function isPromotionLoadingCode(loadingCode: string): boolean {
+  const normalizedCode = normalizeLookupKey(loadingCode).toUpperCase();
+  return new Set([
+    "1MONTHFREE",
+    "1MONTHSFREE",
+    "2MONTHFREE",
+    "2MONTHSFREE",
+    "3MONTHFREE",
+    "3MONTHSFREE",
+    "4MONTHFREE",
+    "4MONTHSFREE",
+    "5MONTHFREE",
+    "5MONTHSFREE",
+  ]).has(normalizedCode);
+}
+
+function deriveVisibleLoadingCategories(record: unknown) {
+  const entries = collectLoadingEntries(record, findFirstStringValueByKeyInObject(record, "WebDisplay"));
+
+  return {
+    hasDiscountLoading: entries.some(
+      (entry) => entry.webDisplay.toUpperCase() === "YES" && isDiscountLoadingCode(entry.loadingCode)
+    ),
+    hasPromotionLoading: entries.some(
+      (entry) => entry.webDisplay.toUpperCase() === "YES" && isPromotionLoadingCode(entry.loadingCode)
+    ),
+  };
+}
+
+type LoadingEntry = {
+  loadingCode: string;
+  loadingAmount: number;
+  webDisplay: string;
+  loadingDescription: string;
+};
+
+function computeLoadingTotal(record: unknown, category: "discount" | "promotion"): string | null {
+  const entries = collectLoadingEntries(record, findFirstStringValueByKeyInObject(record, "WebDisplay"));
+
+  const total = entries.reduce((sum, entry) => {
+    const code = entry.loadingCode;
+    const webDisplay = entry.webDisplay.toUpperCase();
+    if (webDisplay !== "YES") {
+      return sum;
+    }
+
+    if (category === "discount" && isDiscountLoadingCode(code)) {
+      return sum + entry.loadingAmount;
+    }
+
+    if (category === "promotion" && isPromotionLoadingCode(code)) {
+      return sum + entry.loadingAmount;
+    }
+
+    return sum;
+  }, 0);
+
+  if (total === 0) {
+    return null;
+  }
+
+  return formatAmount(total);
+}
+
+function getLoadingDescriptionForCategory(record: unknown, category: "discount" | "promotion"): string | null {
+  const entries = collectLoadingEntries(record, findFirstStringValueByKeyInObject(record, "WebDisplay"));
+  for (const entry of entries) {
+    const webDisplay = entry.webDisplay.toUpperCase();
+    if (webDisplay !== "YES") {
+      continue;
+    }
+
+    if (category === "discount" && isDiscountLoadingCode(entry.loadingCode)) {
+      return entry.loadingDescription || null;
+    }
+
+    if (category === "promotion" && isPromotionLoadingCode(entry.loadingCode)) {
+      return entry.loadingDescription || null;
+    }
+  }
+
+  return null;
+}
+
+function resolveLoadingDescriptionFallback(record: unknown): string | null {
+  const discountDescription = getLoadingDescriptionForCategory(record, "discount");
+  const promotionDescription = getLoadingDescriptionForCategory(record, "promotion");
+
+  if (discountDescription && !promotionDescription) {
+    return discountDescription;
+  }
+
+  if (promotionDescription && !discountDescription) {
+    return promotionDescription;
+  }
+
+  return null;
+}
+
+function inferLoadingDescriptionCategoryFromElement(element: Element | null): "discount" | "promotion" | null {
+  const searchTerms = (value: string) => {
+    const normalized = value.toLowerCase();
+    if (/promotion/.test(normalized) || normalized.includes("totalpromotionamount") || normalized.includes("promotionloadingdescription")) {
+      return "promotion" as const;
+    }
+    if (/discount/.test(normalized) || normalized.includes("totaldiscountamount") || normalized.includes("discountloadingdescription")) {
+      return "discount" as const;
+    }
+    return null;
+  };
+
+  let current: Element | null = element;
+  while (current) {
+    const candidateValue = [
+      current.tagName,
+      current.className,
+      current.id,
+      current.getAttribute("data-codename") ?? "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const candidateGroup = searchTerms(candidateValue);
+    if (candidateGroup) {
+      return candidateGroup;
+    }
+
+    current = current.parentElement;
+  }
+
+  current = element;
+  while (current) {
+    const htmlValue = (current.outerHTML || "").toLowerCase();
+    const candidateGroup = searchTerms(htmlValue);
+    if (candidateGroup) {
+      return candidateGroup;
+    }
+
+    current = current.parentElement;
+  }
+
+  current = element;
+  while (current) {
+    const textValue = (current.textContent || "").toLowerCase();
+    const candidateGroup = searchTerms(textValue);
+    if (candidateGroup) {
+      return candidateGroup;
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function collectLoadingEntries(
+  value: unknown,
+  defaultWebDisplay = ""
+): Array<LoadingEntry> {
+  const entries: Array<LoadingEntry> = [];
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      entries.push(...collectLoadingEntries(item, defaultWebDisplay));
+    }
+    return entries;
+  }
+
+  if (!value || typeof value !== "object") {
+    return entries;
+  }
+
+  const item = value as Record<string, unknown>;
+  const loadingCode = findDirectStringValueByKey(item, "LoadingCode");
+  const loadingAmountString = findDirectStringValueByKey(item, "LoadingAmount");
+
+  if (loadingCode && loadingAmountString) {
+    const loadingAmount = parseAmountValue(loadingAmountString);
+    const webDisplay = findDirectStringValueByKey(item, "WebDisplay") || defaultWebDisplay;
+    const loadingDescription = findDirectStringValueByKey(item, "LoadingDescription");
+    if (!Number.isNaN(loadingAmount)) {
+      entries.push({ loadingCode, loadingAmount, webDisplay, loadingDescription });
+    }
+  }
+
+  for (const child of Object.values(item)) {
+    if (child === null || typeof child !== "object") {
+      continue;
+    }
+    entries.push(...collectLoadingEntries(child, defaultWebDisplay));
+  }
+
+  return entries;
+}
+
+function parseAmountValue(value: string): number {
+  const normalized = value.replace(/[^0-9.-]+/g, "").trim();
+  return normalized ? Number(normalized) : NaN;
+}
+
+function formatAmount(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return value.toFixed(2).replace(/\.00$/, "");
+}
+
 function resolvePlaceholderValue(token: string, lookup: Map<string, string>): string | null {
   const normalizedToken = normalizeLookupKey(token);
   return lookup.get(normalizedToken) || null;
@@ -223,7 +513,40 @@ function replaceCmsPlaceholders(
 
   const lookup = buildXmlValueLookup(record);
 
-  const resolveTokenValue = (token: string): string | null => {
+  const resolveTokenValue = (
+    token: string,
+    elementContext?: Element | null
+  ): string | null => {
+    const normalizedToken = normalizeLookupKey(token);
+
+    if (normalizedToken === "loadingdescription") {
+      const group = inferLoadingDescriptionCategoryFromElement(elementContext ?? null);
+      if (group) {
+        const groupDescription = getLoadingDescriptionForCategory(record, group);
+        if (groupDescription !== null) {
+          return groupDescription;
+        }
+      }
+
+      const fallbackDescription = resolveLoadingDescriptionFallback(record);
+      if (fallbackDescription !== null) {
+        return fallbackDescription;
+      }
+    }
+
+    if (normalizedToken === "discountloadingdescription") {
+      return getLoadingDescriptionForCategory(record, "discount");
+    }
+
+    if (normalizedToken === "promotionloadingdescription") {
+      return getLoadingDescriptionForCategory(record, "promotion");
+    }
+
+    const calculatedValue = resolveCalculatedPlaceholderValue(token, record);
+    if (calculatedValue !== null) {
+      return calculatedValue;
+    }
+
     const brandPartnerOnlyValue = resolveBrandPartnerOnlyPlaceholderValue(token, brandPartner);
     if (brandPartnerOnlyValue !== undefined) {
       return brandPartnerOnlyValue;
@@ -232,21 +555,23 @@ function replaceCmsPlaceholders(
     return resolvePlaceholderValue(token, lookup);
   };
 
-  const replaceToken = (match: string, primaryToken?: string, secondaryToken?: string) => {
-    const token = String(primaryToken || secondaryToken || "").trim();
+  const replaceToken = (elementContext?: Element | null) => (...args: Array<string | number>) => {
+    const match = String(args[0] ?? "");
+    const groups = args.slice(1, -2) as string[];
+    const token = String(groups.find((group) => typeof group === "string" && group.trim()) || "").trim();
     if (!token) {
       return match;
     }
 
-    const value = resolveTokenValue(token);
+    const value = resolveTokenValue(token, elementContext);
     return value ?? match;
   };
 
-  const replacePlaceholderTokens = (input: string): string => {
+  const replacePlaceholderTokens = (input: string, elementContext?: Element | null): string => {
     return input
-      .replace(RAW_PLACEHOLDER_PATTERN, replaceToken)
-      .replace(ENCODED_PLACEHOLDER_PATTERN, replaceToken)
-      .replace(URL_ENCODED_PLACEHOLDER_PATTERN, replaceToken);
+      .replace(RAW_PLACEHOLDER_PATTERN, replaceToken(elementContext))
+      .replace(ENCODED_PLACEHOLDER_PATTERN, replaceToken(elementContext))
+      .replace(URL_ENCODED_PLACEHOLDER_PATTERN, replaceToken(elementContext));
   };
 
   if (typeof DOMParser === "undefined" || typeof document === "undefined") {
@@ -259,7 +584,7 @@ function replaceCmsPlaceholders(
     // Resolve placeholders in all attributes (href, src, title, etc.) as plain text values.
     for (const element of Array.from(htmlDoc.body.querySelectorAll("*"))) {
       for (const attribute of Array.from(element.attributes)) {
-        const resolvedAttributeValue = replacePlaceholderTokens(attribute.value);
+        const resolvedAttributeValue = replacePlaceholderTokens(attribute.value, element);
         if (resolvedAttributeValue !== attribute.value) {
           element.setAttribute(attribute.name, resolvedAttributeValue);
         }
@@ -299,10 +624,13 @@ function replaceCmsPlaceholders(
         fragment.appendChild(htmlDoc.createTextNode(textContent.slice(cursor, matchIndex)));
       }
 
-      const token =
-        String(match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
+      const token = String(
+        match.slice(1).find(
+          (group) => typeof group === "string" && group.trim()
+        ) || ""
+      ).trim();
 
-      const resolvedValue = token ? resolveTokenValue(token) : null;
+      const resolvedValue = token ? resolveTokenValue(token, textNode.parentElement) : null;
       const isUnresolvedPlaceholder = resolvedValue === null;
 
       if (showResolvedValues && resolvedValue !== null) {
@@ -1357,6 +1685,18 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "BoosterCare")
     : "";
 
+  const webDisplay = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "WebDisplay")
+    : "";
+
+  const loadingCode = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "LoadingCode")
+    : "";
+
+  const { hasDiscountLoading, hasPromotionLoading } = filteredRecord
+    ? deriveVisibleLoadingCategories(filteredRecord)
+    : { hasDiscountLoading: false, hasPromotionLoading: false };
+
   const paymentPeriod = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "PaymentPeriod")
     : "";
@@ -1436,6 +1776,7 @@ export default function Home() {
         currentLetterCode, partnerName, waiverOutcome, underwriter, autoRenewal,
         cancellationReason, cancelWithCoolingPeriod, cxPremiumDueDate,
         taskSubcategoryCode, upmTrigger, idrDelayReason, renewalLetterType, renewalLetterReasonCode,
+        webDisplay, loadingCode, String(hasDiscountLoading), String(hasPromotionLoading),
       ].join("|");
       const isRecordChange = recordKey !== coiRecordKeyRef.current;
       coiRecordKeyRef.current = recordKey;
@@ -1540,6 +1881,22 @@ export default function Home() {
 
           if (boosterCare) {
             params.set("boosterCare", boosterCare);
+          }
+
+              if (webDisplay) {
+            params.set("webDisplay", webDisplay);
+          }
+
+          if (loadingCode) {
+            params.set("loadingCode", loadingCode);
+          }
+
+          if (hasDiscountLoading) {
+            params.set("hasDiscountLoading", "true");
+          }
+
+          if (hasPromotionLoading) {
+            params.set("hasPromotionLoading", "true");
           }
 
           if (paymentPeriod) {

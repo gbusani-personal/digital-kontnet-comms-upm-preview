@@ -226,6 +226,10 @@ type ContentBlockVisibilityContext = {
   boosterCare?: string;
   paymentPeriod?: string;
   installmentCollectionFeeBase?: string;
+  webDisplay?: string;
+  loadingCode?: string;
+  hasDiscountLoading?: boolean;
+  hasPromotionLoading?: boolean;
 };
 
 // Visibility rules for content blocks
@@ -251,7 +255,41 @@ const CONTENT_BLOCK_VISIBILITY_RULES: Record<string, (context: ContentBlockVisib
   coi_premium_details_section_instalment_collection: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined,
   coi_premium_details_section_instalment_collection_fee: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined,
   coi_premium_details_section_total_payment_premium: (ctx) => ctx.installmentCollectionFeeBase !== "0" && ctx.installmentCollectionFeeBase !== undefined && (ctx.paymentPeriod === "Monthly" || ctx.paymentPeriod === "Fortnightly"),
-  
+
+  discount: (ctx) => {
+    if (ctx.hasDiscountLoading !== undefined) {
+      return ctx.hasDiscountLoading;
+    }
+
+    const webDisplay = (ctx.webDisplay || "").trim().toUpperCase();
+    const loadingCode = (ctx.loadingCode || "").trim().toUpperCase();
+    return webDisplay === "YES" && loadingCode === "DISCOUNT";
+  },
+
+  promotion: (ctx) => {
+    if (ctx.hasPromotionLoading !== undefined) {
+      return ctx.hasPromotionLoading;
+    }
+
+    const webDisplay = (ctx.webDisplay || "").trim().toUpperCase();
+    const loadingCode = (ctx.loadingCode || "").trim().toUpperCase();
+    return (
+      webDisplay === "YES" &&
+      [
+        "1MONTHFREE",
+        "1MONTHSFREE",
+        "2MONTHFREE",
+        "2MONTHSFREE",
+        "3MONTHFREE",
+        "3MONTHSFREE",
+        "4MONTHFREE",
+        "4MONTHSFREE",
+        "5MONTHFREE",
+        "5MONTHSFREE",
+      ].includes(loadingCode)
+    );
+  },
+
   // Tax line (excluded for renewal offer)
   coi_tax_line: (ctx) => ctx.letterType !== "Renewal_Offer",
   
@@ -1888,6 +1926,10 @@ export async function GET(request: Request) {
   const boosterCare = searchParams.get("boosterCare") || "";
   const paymentPeriod = searchParams.get("paymentPeriod") || "";
   const installmentCollectionFeeBase = searchParams.get("installmentCollectionFeeBase") || "";
+  const webDisplay = searchParams.get("webDisplay") || "";
+  const loadingCode = searchParams.get("loadingCode") || "";
+  const hasDiscountLoading = searchParams.get("hasDiscountLoading") === "true";
+  const hasPromotionLoading = searchParams.get("hasPromotionLoading") === "true";
 
   // Build visibility context for content block filtering
   const visibilityContext: ContentBlockVisibilityContext = {
@@ -1897,6 +1939,10 @@ export async function GET(request: Request) {
     boosterCare: boosterCare || undefined,
     paymentPeriod: paymentPeriod || undefined,
     installmentCollectionFeeBase: installmentCollectionFeeBase || undefined,
+    webDisplay: webDisplay || undefined,
+    loadingCode: loadingCode || undefined,
+    hasDiscountLoading: hasDiscountLoading || undefined,
+    hasPromotionLoading: hasPromotionLoading || undefined,
   };
 
   if (!letterCode) {
