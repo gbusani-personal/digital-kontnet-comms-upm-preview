@@ -263,7 +263,7 @@ const CONTENT_BLOCK_VISIBILITY_RULES: Record<string, (context: ContentBlockVisib
 
     const webDisplay = (ctx.webDisplay || "").trim().toUpperCase();
     const loadingCode = (ctx.loadingCode || "").trim().toUpperCase();
-    return webDisplay === "YES" && loadingCode === "DISCOUNT";
+    return webDisplay === "YES" && (loadingCode === "DISCOUNT" || loadingCode === "PROMOTION");
   },
 
   promotion: (ctx) => {

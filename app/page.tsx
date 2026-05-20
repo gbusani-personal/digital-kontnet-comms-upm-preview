@@ -241,11 +241,37 @@ function findDirectStringValueByKey(obj: Record<string, unknown>, key: string): 
   return "";
 }
 
+function computeDiscountAndPromotionTotal(record: unknown): string | null {
+  const entries = collectLoadingEntries(record, findFirstStringValueByKeyInObject(record, "WebDisplay"));
+
+  const total = entries.reduce((sum, entry) => {
+    const code = entry.loadingCode;
+    const webDisplay = entry.webDisplay.toUpperCase();
+    if (webDisplay !== "YES") {
+      return sum;
+    }
+    // Include explicit PROMOTION codes in the combined total, even though
+    // promotion visibility is restricted to month-free codes only.
+    const normalizedCode = normalizeLookupKey(code).toUpperCase();
+    if (isDiscountLoadingCode(code) || isPromotionLoadingCode(code) || normalizedCode === "PROMOTION") {
+      return sum + entry.loadingAmount;
+    }
+
+    return sum;
+  }, 0);
+
+  if (total === 0) {
+    return null;
+  }
+
+  return formatAmount(Math.abs(total));
+}
+
 function resolveCalculatedPlaceholderValue(token: string, record: unknown): string | null {
   const normalizedToken = normalizeLookupKey(token);
 
   if (normalizedToken === "totaldiscountamount") {
-    return computeLoadingTotal(record, "discount");
+    return computeDiscountAndPromotionTotal(record);
   }
 
   if (normalizedToken === "totalpromotionamount") {
@@ -320,7 +346,37 @@ function computeLoadingTotal(record: unknown, category: "discount" | "promotion"
     return null;
   }
 
-  return formatAmount(total);
+  return formatAmount(Math.abs(total));
+}
+
+function formatPromotionLoadingDescription(description: string | null): string | null {
+  if (!description) {
+    return null;
+  }
+
+  const normalized = description.trim().toLowerCase();
+  const mappings: Array<[RegExp, string]> = [
+    [/1\s*months?\s*free/, "one month"],
+    [/2\s*months?\s*free/, "two months"],
+    [/3\s*months?\s*free/, "three months"],
+    [/4\s*months?\s*free/, "four months"],
+    [/5\s*months?\s*free/, "five months"],
+    [/6\s*months?\s*free/, "six months"],
+    [/7\s*months?\s*free/, "seven months"],
+    [/8\s*months?\s*free/, "eight months"],
+    [/9\s*months?\s*free/, "nine months"],
+    [/10\s*months?\s*free/, "ten months"],
+    [/11\s*months?\s*free/, "eleven months"],
+    [/12\s*months?\s*free/, "twelve months"],
+  ];
+
+  for (const [pattern, transformed] of mappings) {
+    if (pattern.test(normalized)) {
+      return transformed;
+    }
+  }
+
+  return description;
 }
 
 function getLoadingDescriptionForCategory(record: unknown, category: "discount" | "promotion"): string | null {
@@ -336,7 +392,7 @@ function getLoadingDescriptionForCategory(record: unknown, category: "discount" 
     }
 
     if (category === "promotion" && isPromotionLoadingCode(entry.loadingCode)) {
-      return entry.loadingDescription || null;
+      return formatPromotionLoadingDescription(entry.loadingDescription) || null;
     }
   }
 
