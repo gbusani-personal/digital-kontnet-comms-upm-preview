@@ -1357,6 +1357,33 @@ function resolveTemplateDirectlyByCode(
   );
 }
 
+function parseStringArrayQueryParam(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    if (typeof parsed === "string") {
+      return [parsed.trim()].filter(Boolean);
+    }
+  } catch {
+    // Ignore invalid JSON and fall back to comma-separated values.
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function resolveTemplateBySelector(
   letterTypeItem: KontentItem,
   allItems: KontentItem[],
@@ -2293,6 +2320,145 @@ export async function GET(request: Request) {
         combinedModularContent,
         visibilityContext
       );
+      return NextResponse.json(
+        {
+          ...content,
+          brandPartner: resolvedBrandPartner,
+          otherAssetsOptions,
+          selectedOtherAssetsCodename,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (normalizedLetterCode === "COVER") {
+      const coverPartnerCSPurl = searchParams.get("partnerCSPurl") || "";
+      const coverAttachmentCodes = parseStringArrayQueryParam(
+        searchParams.get("attachmentCodes")
+      );
+      const coverOnholdLec = searchParams.get("onholdLec") || "";
+      const normalizedOnholdLec = normalizeCode(coverOnholdLec);
+      const coverBaseCodename = coverPartnerCSPurl.trim()
+        ? "CoverPortal"
+        : "CoverNonPortal";
+      const coverBaseTemplate = resolveTemplateDirectlyByCode(
+        items,
+        modularContent,
+        coverBaseCodename
+      );
+
+      if (!coverBaseTemplate) {
+        return NextResponse.json(
+          {
+            error:
+              `Unable to resolve base Cover template '${coverBaseCodename}'.`,
+          },
+          { status: 404 }
+        );
+      }
+
+      const requestedOtherAssetsCodename = searchParams.get("otherAssetsCodename") || "";
+      const otherAssetsOptions: OtherAssetsOption[] = [];
+      const seenCodenames = new Set<string>();
+
+      const addTemplateOption = (
+        template: KontentItem,
+        displayNameOverride?: string
+      ) => {
+        const codename = readTextValue(template.system?.codename);
+        if (!codename) {
+          return;
+        }
+        const normalizedCodename = normalizeCodeKey(codename);
+        if (seenCodenames.has(normalizedCodename) || isExcludedOtherAssetsTemplate(template)) {
+          return;
+        }
+        otherAssetsOptions.push({
+          codename,
+          name:
+            displayNameOverride || readTemplateDisplayName(template),
+        });
+        seenCodenames.add(normalizedCodename);
+      };
+
+      addTemplateOption(
+        coverBaseTemplate,
+        coverBaseCodename === "CoverPortal"
+          ? "Cover-Portal"
+          : "Cover-NonPortal"
+      );
+
+      for (const attachmentCode of coverAttachmentCodes) {
+        if (!attachmentCode.trim()) {
+          continue;
+        }
+
+        const normalizedAttachmentCode = normalizeCodeKey(attachmentCode);
+        if (seenCodenames.has(normalizedAttachmentCode)) {
+          continue;
+        }
+
+        const effectiveAttachmentCode =
+          normalizedAttachmentCode === "ONHOLD"
+            ? normalizedOnholdLec === "YES"
+              ? "ONHOLD-LEC"
+              : "ONHOLD-NOLEC"
+            : attachmentCode;
+
+        const attachmentTemplate =
+          resolveTemplateByCodeAcrossLetterTypes(
+            items,
+            modularContent,
+            effectiveAttachmentCode
+          ) || resolveTemplateDirectlyByCode(items, modularContent, effectiveAttachmentCode);
+
+        if (!attachmentTemplate) {
+          continue;
+        }
+
+        addTemplateOption(attachmentTemplate);
+      }
+
+      if (otherAssetsOptions.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Unable to resolve any Cover other asset templates for the provided attachments.",
+          },
+          { status: 404 }
+        );
+      }
+
+      let selectedTemplate = coverBaseTemplate;
+      let selectedOtherAssetsCodename = otherAssetsOptions[0]?.codename || "";
+
+      const allowedOptionCodenames = new Set(
+        otherAssetsOptions.map((option) => normalizeCodeKey(option.codename))
+      );
+
+      if (
+        requestedOtherAssetsCodename &&
+        allowedOptionCodenames.has(normalizeCodeKey(requestedOtherAssetsCodename)) &&
+        normalizeCodeKey(requestedOtherAssetsCodename) !== normalizeCodeKey(selectedOtherAssetsCodename)
+      ) {
+        const overrideTemplate = readItemByCodename(
+          requestedOtherAssetsCodename,
+          [...items, ...Object.values(modularContent)],
+          modularContent
+        );
+        if (overrideTemplate) {
+          selectedTemplate = overrideTemplate;
+          selectedOtherAssetsCodename = requestedOtherAssetsCodename;
+        }
+      }
+
+      const content = extractContent(
+        selectedTemplate,
+        items,
+        modularContent,
+        visibilityContext
+      );
+
       return NextResponse.json(
         {
           ...content,

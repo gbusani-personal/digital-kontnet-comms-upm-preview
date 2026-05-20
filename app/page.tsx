@@ -1608,7 +1608,9 @@ export default function Home() {
       : "";
   const currentLetterCodeKey = currentLetterCode.toUpperCase();
   const isOtherAssetsEligibleCode =
-    currentLetterCodeKey === "COI" || currentLetterCodeKey === "RENEWAL";
+    currentLetterCodeKey === "COI" ||
+    currentLetterCodeKey === "RENEWAL" ||
+    currentLetterCodeKey === "COVER";
 
   function normalizeFieldKey(value: string): string {
     return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -1684,6 +1686,112 @@ export default function Home() {
 
     return "";
   };
+
+  function findAllStringValuesByKey(
+    obj: unknown,
+    key: string,
+    isRoot = true
+  ): string[] {
+    if (obj === null || obj === undefined) {
+      return [];
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.flatMap((item) => findAllStringValuesByKey(item, key, false));
+    }
+
+    if (typeof obj !== "object") {
+      return [];
+    }
+
+    const record = obj as Record<string, unknown>;
+    const targetKey = normalizeFieldKey(key);
+    const values: string[] = [];
+
+    for (const [recordKey, recordValue] of Object.entries(record)) {
+      if (!isRoot && normalizeFieldKey(recordKey) === targetKey) {
+        const candidate = readFirstStringFromValue(recordValue);
+        if (candidate) {
+          values.push(candidate);
+        }
+      }
+      values.push(...findAllStringValuesByKey(recordValue, key, false));
+    }
+
+    return values.filter(Boolean);
+  }
+
+  const coverPartnerCSPurl = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "PartnerCSPurl")
+    : "";
+
+  function findFirstAttachmentFieldValue(
+    obj: unknown,
+    targetLetterCode: string,
+    fieldKey: string
+  ): string {
+    if (obj === null || obj === undefined) {
+      return "";
+    }
+
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        const found = findFirstAttachmentFieldValue(item, targetLetterCode, fieldKey);
+        if (found) {
+          return found;
+        }
+      }
+      return "";
+    }
+
+    if (typeof obj !== "object") {
+      return "";
+    }
+
+    const record = obj as Record<string, unknown>;
+    const candidateLetterCode =
+      readFirstStringFromValue(record["Letter_Code_"]) ||
+      readFirstStringFromValue(record["LetterCode"]) ||
+      readFirstStringFromValue(record["Letter Code"]);
+
+    if (
+      candidateLetterCode &&
+      normalizeFieldKey(candidateLetterCode) === normalizeFieldKey(targetLetterCode)
+    ) {
+      return (
+        readFirstStringFromValue(record[fieldKey]) ||
+        readFirstStringFromValue(record[fieldKey.toUpperCase()]) ||
+        readFirstStringFromValue(record[fieldKey.toLowerCase()])
+      );
+    }
+
+    for (const value of Object.values(record)) {
+      const found = findFirstAttachmentFieldValue(value, targetLetterCode, fieldKey);
+      if (found) {
+        return found;
+      }
+    }
+
+    return "";
+  }
+
+  const coverAttachmentCodes = filteredRecord
+    ? Array.from(
+        new Set(
+          findAllStringValuesByKey(filteredRecord, "Letter_Code_")
+            .map((value) => value.trim())
+            .filter(
+              (value) =>
+                value &&
+                normalizeFieldKey(value) !== normalizeFieldKey(currentLetterCode)
+            )
+        )
+      )
+    : [];
+
+  const coverOnholdLec = filteredRecord
+    ? findFirstAttachmentFieldValue(filteredRecord, "ONHOLD", "LEC")
+    : "";
 
   const waiverOutcome = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "WaiverOutcome")
@@ -1866,6 +1974,7 @@ export default function Home() {
         cancellationReason, cancelWithCoolingPeriod, cxPremiumDueDate,
         taskSubcategoryCode, upmTrigger, idrDelayReason, renewalLetterType, renewalLetterReasonCode,
         webDisplay, loadingCode, String(hasDiscountLoading), String(hasPromotionLoading),
+        coverPartnerCSPurl, coverAttachmentCodes.join(","), coverOnholdLec,
       ].join("|");
       const isRecordChange = recordKey !== coiRecordKeyRef.current;
       coiRecordKeyRef.current = recordKey;
@@ -1990,6 +2099,18 @@ export default function Home() {
 
           if (paymentPeriod) {
             params.set("paymentPeriod", paymentPeriod);
+          }
+
+          if (currentLetterCodeKey === "COVER") {
+            if (coverPartnerCSPurl) {
+              params.set("partnerCSPurl", coverPartnerCSPurl);
+            }
+            if (coverAttachmentCodes.length > 0) {
+              params.set("attachmentCodes", JSON.stringify(coverAttachmentCodes));
+            }
+            if (coverOnholdLec) {
+              params.set("onholdLec", coverOnholdLec);
+            }
           }
 
           if (installmentCollectionFeeBase) {
