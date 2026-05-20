@@ -236,6 +236,7 @@ type ContentBlockVisibilityContext = {
 const CONTENT_BLOCK_VISIBILITY_RULES: Record<string, (context: ContentBlockVisibilityContext) => boolean> = {
   // Template-level blocks
   coi_template_glm3: (ctx) => ctx.qapiVersion === "QAPI3",
+  coi_template_glm2: (ctx) => ctx.qapiVersion === "QAPI2",
   
   // Top section blocks (mutually exclusive based on letter type)
   coi_top_section_default: (ctx) => ctx.letterType !== "Renewal_Offer",
