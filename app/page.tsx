@@ -561,7 +561,8 @@ function replaceCmsPlaceholders(
   record: unknown,
   brandPartner: BrandPartnerData | null | undefined,
   showResolvedValues: boolean,
-  highlightPlaceholders: boolean
+  highlightPlaceholders: boolean,
+  underwriter?: string
 ): string {
   if (!templateHtml.trim()) {
     return templateHtml;
@@ -606,6 +607,36 @@ function replaceCmsPlaceholders(
     const brandPartnerOnlyValue = resolveBrandPartnerOnlyPlaceholderValue(token, brandPartner);
     if (brandPartnerOnlyValue !== undefined) {
       return brandPartnerOnlyValue;
+    }
+
+    // Underwriter-based placeholder overrides (7logic from XML Underwriter tag)
+    const uwKey = (underwriter || "").trim().toUpperCase().slice(0, 1);
+    if (uwKey) {
+      if (normalizedToken === "coiheadercompany") {
+        if (uwKey === "P") return "PetSure (Australia) Pty Ltd";
+        if (uwKey === "H") return "The Hollard Insurance Company Pty Ltd";
+      }
+
+      if (normalizedToken === "coiheaderabn") {
+        if (uwKey === "P") return "95 075 949 923";
+        if (uwKey === "H") return "78 090 584 473";
+      }
+
+      if (normalizedToken === "coiheaderafsl") {
+        if (uwKey === "P") return "420183";
+        if (uwKey === "H") return "241436";
+      }
+    }
+
+    // TodayDate: return current system date in 'dd MMMM yyyy' format
+    if (normalizedToken === "todaydate") {
+      try {
+        const now = new Date();
+        const formatted = now.toLocaleString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+        return formatted;
+      } catch {
+        return null;
+      }
     }
 
     return resolvePlaceholderValue(token, lookup);
@@ -1775,7 +1806,8 @@ export default function Home() {
       filteredRecord,
       draftContent.brandPartner,
       showResolvedCmsValues,
-      highlightCmsPlaceholders
+      highlightCmsPlaceholders,
+      underwriter
     );
   }, [draftContent.html, draftContent.brandPartner, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 
@@ -1789,7 +1821,8 @@ export default function Home() {
       filteredRecord,
       publishedContent.brandPartner,
       showResolvedCmsValues,
-      highlightCmsPlaceholders
+      highlightCmsPlaceholders,
+      underwriter
     );
   }, [publishedContent.html, publishedContent.brandPartner, filteredRecord, showResolvedCmsValues, highlightCmsPlaceholders]);
 

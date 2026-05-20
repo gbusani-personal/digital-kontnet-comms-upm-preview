@@ -617,15 +617,39 @@ body {
   background: color-mix(in srgb, currentColor 3%, transparent);
 }
 
-.cms-rich-text th,
-.cms-rich-text td {
+.cms-rich-text table th,
+.cms-rich-text table td {
   width: 1%;
   border-right: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-  padding: 0.6rem 0.75rem;
+  padding: 0.75rem 0.9rem;
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.cms-rich-text table th > *:first-child,
+.cms-rich-text table td > *:first-child {
+  margin-top: 0;
+}
+
+.cms-rich-text table th > *:last-child,
+.cms-rich-text table td > *:last-child {
+  margin-bottom: 0;
+}
+
+.cms-rich-text table th p,
+.cms-rich-text table th ul,
+.cms-rich-text table th ol,
+.cms-rich-text table th blockquote,
+.cms-rich-text table th pre,
+.cms-rich-text table td p,
+.cms-rich-text table td ul,
+.cms-rich-text table td ol,
+.cms-rich-text table td blockquote,
+.cms-rich-text table td pre {
+  margin: 0;
 }
 
 .cms-rich-text th {
