@@ -27,6 +27,7 @@ type CmsVersionState = {
   brandPartner: BrandPartnerData | null;
   otherAssetsOptions?: OtherAssetsOption[];
   selectedOtherAssetsCodename?: string;
+  attachments?: unknown[] | null;
 };
 
 type OtherAssetsOption = {
@@ -41,6 +42,49 @@ const ANY_PLACEHOLDER_PATTERN = /<<\s*([^<>]+?)\s*>>|{{\s*([^{}]+?)\s*}}|\|\|\s*
 
 function normalizeLookupKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
+function formatAttachmentElementName(elementKey?: string): string {
+  if (!elementKey) {
+    return "";
+  }
+
+  const normalized = elementKey.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const knownLabels: Record<string, string> = {
+    COVERPAGE: "Cover Page",
+    COVER_PAGE: "Cover Page",
+    LATESTENHANCEMENTINSERT: "Latest Enhancement Insert",
+    LATEST_ENHANCEMENT_INSERT: "Latest Enhancement Insert",
+    PDS: "PDS",
+    SPDS: "SPDS",
+    FSG: "FSG",
+    SFSG: "SFSG",
+    CLAIMFORM: "Claim Form",
+    CLAIM_FORM: "Claim Form",
+    CRUCIATELIGAMENTFORM: "Cruciate Ligament Form",
+    CRUCIATE_LIGAMENT_FORM: "Cruciate Ligament Form",
+    PIAATTACHMENTSRENEWALS: "PIA Attachments (Renewals)",
+    PIA_ATTACHMENTS_RENEWALS: "PIA Attachments (Renewals)",
+    PIA_ATTACHMENTS: "PIA Attachments",
+  };
+
+  if (knownLabels[normalized]) {
+    return knownLabels[normalized];
+  }
+
+  const label = elementKey
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return label
+    .split(" ")
+    .map((word) =>
+      word.length > 0
+        ? `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`
+        : ""
+    )
+    .join(" ");
 }
 
 function normalizeHexColor(value?: string): string | null {
@@ -1801,6 +1845,19 @@ export default function Home() {
     ? findFirstStringValueByKey(filteredRecord, "PartnerName")
     : "";
 
+  const planNo = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "PlanNo") ||
+      findFirstStringValueByKey(filteredRecord, "Plan_No")
+    : "";
+
+  const brokerCode = filteredRecord
+    ? findFirstStringValueByKey(filteredRecord, "BrokerNo") ||
+      findFirstStringValueByKey(filteredRecord, "Broker_No") ||
+      findFirstStringValueByKey(filteredRecord, "Broker Code") ||
+      findFirstStringValueByKey(filteredRecord, "BrokerCode") ||
+      findFirstStringValueByKey(filteredRecord, "Broker_Code")
+    : "";
+
   const underwriter = filteredRecord
     ? findFirstStringValueByKey(filteredRecord, "Underwriter")
     : "";
@@ -1904,6 +1961,13 @@ export default function Home() {
     return usePreviewContent ? draftContent : publishedContent;
   }, [usePreviewContent, draftContent, publishedContent]);
 
+  const activeAttachments = useMemo(() => {
+    if (activeContent.attachments && Array.isArray(activeContent.attachments) && activeContent.attachments.length > 0) {
+      return activeContent.attachments as unknown[];
+    }
+    return null;
+  }, [activeContent.attachments, activeContent.raw]);
+
   const resolvedDraftHtml = useMemo(() => {
     if (!draftContent.html) {
       return "";
@@ -2004,6 +2068,14 @@ export default function Home() {
 
           if (partnerName) {
             params.set("partnerName", partnerName);
+          }
+
+          if (planNo) {
+            params.set("planNo", planNo);
+          }
+
+          if (brokerCode) {
+            params.set("brokerCode", brokerCode);
           }
 
           if (underwriter) {
@@ -2134,6 +2206,7 @@ export default function Home() {
             brandPartner?: BrandPartnerData | null;
             otherAssetsOptions?: OtherAssetsOption[];
             selectedOtherAssetsCodename?: string;
+            attachments?: unknown[] | null;
           } = {};
 
           if (responseText.trim()) {
@@ -2164,6 +2237,7 @@ export default function Home() {
             brandPartner: payload.brandPartner ?? null,
             otherAssetsOptions: payload.otherAssetsOptions ?? [],
             selectedOtherAssetsCodename: payload.selectedOtherAssetsCodename ?? "",
+            attachments: payload.attachments ?? null,
           };
         };
 
@@ -2229,6 +2303,8 @@ export default function Home() {
     currentLetterCode,
     waiverOutcome,
     partnerName,
+    planNo,
+    brokerCode,
     underwriter,
     autoRenewal,
     cancellationReason,
@@ -2446,6 +2522,58 @@ export default function Home() {
               </div>
             </section>
           )}
+
+          <section className="panel" style={{ marginTop: "16px" }}>
+            <div className="panel__header">
+              <p className="panel__eyebrow" style={{ color: "#64748b" }}>PDF Attachments</p>
+            </div>
+            <div className="panel__body">
+              {activeAttachments && activeAttachments.length > 0 ? (
+                <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
+                  {activeAttachments.map((entry, idx) => {
+                    const group = entry as any;
+                    const nestedAssets = Array.isArray(group.assets) ? group.assets : [group];
+                    const elementName = formatAttachmentElementName(group.element);
+                    const groupLabel = elementName || group.attachmentName || group.attachmentCodename || `Attachment ${idx + 1}`;
+
+                    return (
+                      <li key={idx} style={{ marginBottom: "1rem" }}>
+                        {Array.isArray(group.assets) ? (
+                          <div style={{ marginBottom: "0.5rem", fontWeight: 600, color: "#64748b" }}>{groupLabel}</div>
+                        ) : null}
+                        <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
+                          {nestedAssets.map((asset: unknown, assetIdx: number) => {
+                            const item = asset as any;
+                            const name = item.name ?? item.filename ?? item.title ?? `Attachment ${idx + 1}.${assetIdx + 1}`;
+                            const url = item.url ?? item.file?.url ?? item.file?.downloadUrl ?? item.previewUrl ?? null;
+                            const type = item.type ?? item.mimeType ?? item.file?.type;
+                            const isPdf = typeof type === "string"
+                              ? type.toLowerCase().includes("pdf")
+                              : typeof url === "string" && url.toLowerCase().endsWith(".pdf");
+
+                            return (
+                              <li key={assetIdx} style={{ marginBottom: "0.5rem" }}>
+                                {url ? (
+                                  <a href={String(url)} target="_blank" rel="noreferrer noopener" className="button button--small button--ghost">
+                                    {name}
+                                    {isPdf ? " (PDF)" : ""}
+                                  </a>
+                                ) : (
+                                  <span>{name} (no URL)</span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="helper-text">Attachments will appear here when available.</p>
+              )}
+            </div>
+          </section>
 
           {!cmsLoading && !cmsErrorMessage && !activeContent.html && activeContent.raw !== null && (
             <pre className="code-block">

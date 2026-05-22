@@ -112,6 +112,49 @@ type OtherAssetsOption = {
   name: string;
 };
 
+type TaxonomyFilterContext = {
+  planNo: string;
+  brokerCode: string;
+  partnerName: string;
+};
+
+type ManagementAssetElement = {
+  value?: unknown;
+};
+
+type ManagementAsset = {
+  id?: string;
+  codename?: string;
+  file_name?: string;
+  url?: string;
+  elements?: Record<string, ManagementAssetElement>;
+};
+
+type ManagementAssetsResponse = {
+  assets?: ManagementAsset[];
+  pagination?: {
+    continuation_token?: string;
+    next_page?: string;
+  };
+};
+
+type ManagementTaxonomyTerm = {
+  id?: string;
+  codename?: string;
+  name?: string;
+};
+
+type ManagementTaxonomy = {
+  id?: string;
+  codename?: string;
+  name?: string;
+  terms?: ManagementTaxonomyTerm[];
+};
+
+type ManagementTaxonomiesResponse = {
+  taxonomies?: ManagementTaxonomy[];
+};
+
 type ClWaiverConfig = {
   letterCode: string;
   selectorQueryParam: string;
@@ -394,6 +437,362 @@ function readAssetUrl(element?: KontentElement): string {
   return "";
 }
 
+function normalizeAssetUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const normalizePathIdentity = (pathValue: string): string => {
+    const pathSegments = pathValue
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (pathSegments.length >= 2) {
+      const [projectId, fileReferenceId] = pathSegments;
+      const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      if (guidPattern.test(projectId) && guidPattern.test(fileReferenceId)) {
+        return `${projectId.toLowerCase()}/${fileReferenceId.toLowerCase()}`;
+      }
+    }
+
+    return "";
+  };
+
+  try {
+    const parsed = new URL(trimmed);
+    const identity = normalizePathIdentity(parsed.pathname);
+    if (identity) {
+      return identity;
+    }
+
+    return `${parsed.origin}${parsed.pathname}`.toLowerCase();
+  } catch {
+    const withoutQuery = trimmed.split("?")[0];
+    const identity = normalizePathIdentity(withoutQuery);
+    if (identity) {
+      return identity;
+    }
+
+    return withoutQuery.toLowerCase();
+  }
+}
+
+function normalizeLooseText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function matchesNormalizedTermName(left: string, right: string): boolean {
+  const normalizedLeft = normalizeLooseText(left);
+  const normalizedRight = normalizeLooseText(right);
+
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizeCodeKey(normalizedLeft) === normalizeCodeKey(normalizedRight)
+  );
+}
+
+function isPdfAsset(asset: Record<string, unknown>): boolean {
+  const type = typeof asset.type === "string" ? asset.type.toLowerCase() : "";
+  const url = typeof asset.url === "string" ? asset.url.toLowerCase() : "";
+  const fileName =
+    typeof asset.name === "string"
+      ? asset.name.toLowerCase()
+      : typeof asset.filename === "string"
+      ? asset.filename.toLowerCase()
+      : "";
+
+  return type.includes("pdf") || url.endsWith(".pdf") || fileName.endsWith(".pdf");
+}
+
+function getTaxonomyFilterContext(searchParams: URLSearchParams): TaxonomyFilterContext {
+  return {
+    planNo:
+      searchParams.get("planNo") ||
+      searchParams.get("plan_no") ||
+      "",
+    brokerCode:
+      searchParams.get("brokerCode") ||
+      searchParams.get("broker_code") ||
+      "",
+    partnerName:
+      searchParams.get("partnerName") ||
+      searchParams.get("partner_name") ||
+      "",
+  };
+}
+
+async function fetchAllManagementAssets(
+  projectId: string,
+  managementApiKey: string
+): Promise<ManagementAsset[]> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${managementApiKey}`,
+  };
+
+  const uri = `https://manage.kontent.ai/v2/projects/${projectId}/assets?limit=100`;
+  const allAssets: ManagementAsset[] = [];
+  let continuationToken = "";
+
+  for (let i = 0; i < 50; i += 1) {
+    const requestHeaders = continuationToken
+      ? { ...headers, "X-Continuation": continuationToken }
+      : headers;
+
+    const response = await apiFetch(uri, {
+      cache: "no-store",
+      headers: requestHeaders,
+    });
+
+    if (!response.ok) {
+      break;
+    }
+
+    const payload = (await response.json()) as ManagementAssetsResponse;
+    const assets = Array.isArray(payload.assets) ? payload.assets : [];
+
+    if (assets.length === 0) {
+      break;
+    }
+
+    allAssets.push(...assets);
+
+    const nextToken = payload.pagination?.continuation_token || "";
+    if (!nextToken || nextToken === continuationToken) {
+      break;
+    }
+
+    continuationToken = nextToken;
+  }
+
+  return allAssets;
+}
+
+async function fetchManagementTaxonomies(
+  projectId: string,
+  managementApiKey: string
+): Promise<ManagementTaxonomy[]> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${managementApiKey}`,
+  };
+
+  const response = await apiFetch(
+    `https://manage.kontent.ai/v2/projects/${projectId}/taxonomies?limit=200`,
+    {
+      cache: "no-store",
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as ManagementTaxonomiesResponse;
+  return Array.isArray(payload.taxonomies) ? payload.taxonomies : [];
+}
+
+async function fetchMatchingTaxonomyAssetUrlsByTermName(
+  projectId: string,
+  managementApiKey: string,
+  context: TaxonomyFilterContext
+): Promise<Set<string>> {
+  const taxonomyInputs = [
+    {
+      value: context.planNo,
+      matches: (taxonomy: ManagementTaxonomy) => {
+        const codename = normalizeCodeKey(readTextValue(taxonomy.codename));
+        const name = normalizeCodeKey(readTextValue(taxonomy.name));
+        return codename.includes("PLAN") || name.includes("PLANNO") || name.includes("PLAN");
+      },
+    },
+    {
+      value: context.brokerCode,
+      matches: (taxonomy: ManagementTaxonomy) => {
+        const codename = normalizeCodeKey(readTextValue(taxonomy.codename));
+        const name = normalizeCodeKey(readTextValue(taxonomy.name));
+        return codename.includes("BROKER") || name.includes("BROKER");
+      },
+    },
+    {
+      value: context.partnerName,
+      matches: (taxonomy: ManagementTaxonomy) => {
+        const codename = normalizeCodeKey(readTextValue(taxonomy.codename));
+        const name = normalizeCodeKey(readTextValue(taxonomy.name));
+        return name.includes("BRANDPARTNER") || name.includes("PARTNER") || codename.includes("BRANDPARTNER");
+      },
+    },
+  ].filter((input) => input.value.trim().length > 0);
+
+  if (taxonomyInputs.length === 0) {
+    return new Set<string>();
+  }
+
+  const [assets, taxonomies] = await Promise.all([
+    fetchAllManagementAssets(projectId, managementApiKey),
+    fetchManagementTaxonomies(projectId, managementApiKey),
+  ]);
+
+  const matchingTermIds = new Set<string>();
+  for (const input of taxonomyInputs) {
+    const matchingTaxonomies = taxonomies.filter(input.matches);
+
+    for (const taxonomy of matchingTaxonomies) {
+      const terms = Array.isArray(taxonomy.terms) ? taxonomy.terms : [];
+      for (const term of terms) {
+        if (term.id && matchesNormalizedTermName(readTextValue(term.name), input.value)) {
+          matchingTermIds.add(term.id);
+        }
+      }
+    }
+  }
+
+  if (matchingTermIds.size === 0) {
+    return new Set<string>();
+  }
+
+  const matchedAssetUrls = new Set<string>();
+
+  for (const asset of assets) {
+    const values = Array.isArray(asset.elements)
+      ? asset.elements
+      : Object.values(asset.elements ?? {});
+
+    const hasMatchingTerm = values.some((elementValue) => {
+      const valueList = Array.isArray((elementValue as { value?: unknown }).value)
+        ? ((elementValue as { value?: unknown[] }).value ?? [])
+        : [];
+
+      return valueList.some((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+
+        const id = readTextValue((entry as { id?: unknown }).id);
+        return Boolean(id) && matchingTermIds.has(id);
+      });
+    });
+
+    if (!hasMatchingTerm) {
+      continue;
+    }
+
+    const url = normalizeAssetUrl(readTextValue(asset.url));
+    if (url) {
+      matchedAssetUrls.add(url);
+    }
+  }
+
+  return matchedAssetUrls;
+}
+
+function filterAttachmentsByAllowedUrls(
+  attachments: Array<Record<string, unknown>>,
+  allowedUrls: Set<string>
+): Array<Record<string, unknown>> {
+  if (allowedUrls.size === 0) {
+    return [];
+  }
+
+  const filtered: Array<Record<string, unknown>> = [];
+
+  for (const group of attachments) {
+    const nestedAssets = Array.isArray(group.assets) ? group.assets : [group];
+    const matchedAssets = nestedAssets.filter((asset) => {
+      if (!asset || typeof asset !== "object") {
+        return false;
+      }
+
+      const record = asset as Record<string, unknown>;
+      const assetUrl = typeof record.url === "string" ? record.url : "";
+      const normalizedAssetUrl = normalizeAssetUrl(assetUrl);
+
+      return normalizedAssetUrl.length > 0 && allowedUrls.has(normalizedAssetUrl);
+    });
+
+    if (matchedAssets.length === 0) {
+      continue;
+    }
+
+    filtered.push({ ...group, assets: matchedAssets });
+  }
+
+  return filtered;
+}
+
+function filterAttachmentGroupsToPdf(
+  attachments: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  const filtered: Array<Record<string, unknown>> = [];
+
+  for (const group of attachments) {
+    const nestedAssets = Array.isArray(group.assets) ? group.assets : [group];
+    const pdfAssets = nestedAssets.filter((asset) => {
+      if (!asset || typeof asset !== "object") {
+        return false;
+      }
+
+      return isPdfAsset(asset as Record<string, unknown>);
+    });
+
+    if (pdfAssets.length === 0) {
+      continue;
+    }
+
+    filtered.push({ ...group, assets: pdfAssets });
+  }
+
+  return filtered;
+}
+
+async function getFilteredAttachmentsForTemplate(
+  templateItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>,
+  options: {
+    projectId: string;
+    managementApiKey: string;
+    taxonomyContext: TaxonomyFilterContext;
+  }
+): Promise<Array<Record<string, unknown>>> {
+  const attachments = filterAttachmentGroupsToPdf(
+    getAttachmentsForTemplate(templateItem, allItems, modularContent)
+  );
+
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  const hasTaxonomyFilter =
+    options.taxonomyContext.planNo.trim() ||
+    options.taxonomyContext.brokerCode.trim() ||
+    options.taxonomyContext.partnerName.trim();
+
+  if (!hasTaxonomyFilter) {
+    return attachments;
+  }
+
+  if (!options.managementApiKey.trim()) {
+    return [];
+  }
+
+  const allowedAssetUrls = await fetchMatchingTaxonomyAssetUrlsByTermName(
+    options.projectId,
+    options.managementApiKey,
+    options.taxonomyContext
+  );
+
+  return filterAttachmentsByAllowedUrls(attachments, allowedAssetUrls);
+}
+
 function readLinkedCodenames(element?: KontentElement): string[] {
   if (!element || !Array.isArray(element.value)) {
     return [];
@@ -672,6 +1071,88 @@ function extractContent(
     html,
     raw: item,
   };
+}
+
+function getAttachmentsForTemplate(
+  templateItem: KontentItem | null,
+  allItems: KontentItem[],
+  modularContent: Record<string, KontentItem>
+): Array<Record<string, unknown>> {
+  if (!templateItem) return [];
+
+  const templateCodename = readTextValue(templateItem.system?.codename);
+  if (!templateCodename) return [];
+
+  // Find letter_type items that link to this template
+  const letterTypeItems = allItems.filter((item) => item.system?.type === "letter_type" && (() => {
+    const linked = readLinkedTemplateCodenames(item.elements ?? {});
+    return linked.some((c) => normalizeCodeKey(c) === normalizeCodeKey(templateCodename));
+  })());
+
+  const results: Array<Record<string, unknown>> = [];
+
+  const processAttachmentItem = (attachmentItem: KontentItem) => {
+    const elements = attachmentItem.elements ?? {};
+    for (const [elemKey, elem] of Object.entries(elements)) {
+      // treat asset arrays as attachment entries
+      if (Array.isArray(elem.value) && elem.value.length > 0) {
+        const assets = (elem.value as unknown[]).filter(Boolean).map((asset) => {
+          if (asset && typeof asset === "object") {
+            const a = asset as Record<string, unknown>;
+            const url = typeof a.url === "string" ? a.url : "";
+            const name = typeof a.name === "string" ? a.name : typeof a.filename === "string" ? a.filename : "";
+            const type = typeof a.type === "string" ? a.type : "";
+            const isPdf = url.toLowerCase().endsWith(".pdf") || (typeof a.type === "string" && a.type.toLowerCase().includes("pdf"));
+            return { url, name, type, isPdf, raw: a } as Record<string, unknown>;
+          }
+          return { raw: asset } as Record<string, unknown>;
+        });
+
+        if (assets.length > 0) {
+          results.push({ element: elemKey, assets, attachmentCodename: readTextValue(attachmentItem.system?.codename), attachmentName: readTextValue(attachmentItem.system?.name) });
+        }
+      }
+    }
+  };
+
+  for (const lt of letterTypeItems) {
+    const elements = lt.elements ?? {};
+    // look for linked attachments codenames in any element that mentions 'attach'
+    for (const [k, v] of Object.entries(elements)) {
+      if (normalizeCodeKey(k).includes("ATTACHMENT")) {
+        const linked = readLinkedCodenames(v);
+        for (const codename of linked) {
+          const attachItem = modularContent[codename] || allItems.find((it) => readTextValue(it.system?.codename) === codename);
+          if (attachItem) {
+            processAttachmentItem(attachItem);
+          }
+        }
+      }
+    }
+
+    // Also check for a direct linked 'attachments' element (singular/plural)
+    const possibleKeys = ["attachments", "attachment", "letter_attachments", "letter_attachment"];
+    for (const key of possibleKeys) {
+      const linked = readLinkedCodenames((lt.elements ?? {})[key]);
+      for (const codename of linked) {
+        const attachItem = modularContent[codename] || allItems.find((it) => readTextValue(it.system?.codename) === codename);
+        if (attachItem) processAttachmentItem(attachItem);
+      }
+    }
+  }
+
+  // Deduplicate by attachmentCodename+element
+  const seen = new Set<string>();
+  const deduped: Array<Record<string, unknown>> = [];
+  for (const r of results) {
+    const key = `${String(r.attachmentCodename || "")}::${String(r.element || "")}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(r);
+    }
+  }
+
+  return deduped;
 }
 
 function readTemplateDisplayName(item: KontentItem): string {
@@ -1946,6 +2427,7 @@ export async function GET(request: Request) {
   const usePreviewParam = searchParams.get("usePreview");
   const underwriter = searchParams.get("underwriter") || "";
   const partnerName = searchParams.get("partnerName") || "";
+  const taxonomyContext = getTaxonomyFilterContext(searchParams);
 
   // Visibility context parameters
   const letterTypeForVisibility = searchParams.get("letterTypeForVisibility") || "";
@@ -1991,6 +2473,11 @@ export async function GET(request: Request) {
   const previewApiKey =
     process.env.KONTENT_PREVIEW_API_KEY ||
     process.env.NEXT_PUBLIC_KONTENT_PREVIEW_API_KEY ||
+    "";
+
+  const managementApiKey =
+    process.env.KONTENT_MANAGEMENT_API_KEY ||
+    process.env.NEXT_PUBLIC_KONTENT_MANAGEMENT_API_KEY ||
     "";
 
   if (!projectId) {
@@ -2091,10 +2578,21 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(clWaiverResult.template, items, modularContent, visibilityContext);
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        items,
+        modularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
       return NextResponse.json(
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          attachments,
         },
         { status: 200 }
       );
@@ -2123,10 +2621,21 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(singleTemplate, items, modularContent, visibilityContext);
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        items,
+        modularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
       return NextResponse.json(
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          attachments,
         },
         { status: 200 }
       );
@@ -2320,12 +2829,23 @@ export async function GET(request: Request) {
         combinedModularContent,
         visibilityContext
       );
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        combinedItems,
+        combinedModularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
       return NextResponse.json(
         {
           ...content,
           brandPartner: resolvedBrandPartner,
           otherAssetsOptions,
           selectedOtherAssetsCodename,
+          attachments,
         },
         { status: 200 }
       );
@@ -2458,6 +2978,16 @@ export async function GET(request: Request) {
         modularContent,
         visibilityContext
       );
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        items,
+        modularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
 
       return NextResponse.json(
         {
@@ -2465,6 +2995,7 @@ export async function GET(request: Request) {
           brandPartner: resolvedBrandPartner,
           otherAssetsOptions,
           selectedOtherAssetsCodename,
+          attachments,
         },
         { status: 200 }
       );
@@ -2695,6 +3226,16 @@ export async function GET(request: Request) {
         combinedModularContent,
         visibilityContext
       );
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        combinedItems,
+        combinedModularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
 
       return NextResponse.json(
         {
@@ -2702,6 +3243,7 @@ export async function GET(request: Request) {
           brandPartner: resolvedBrandPartner,
           otherAssetsOptions,
           selectedOtherAssetsCodename,
+          attachments,
         },
         { status: 200 }
       );
@@ -2738,10 +3280,21 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(cancelResult.template, items, modularContent, visibilityContext);
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        items,
+        modularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
       return NextResponse.json(
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          attachments,
         },
         { status: 200 }
       );
@@ -2775,10 +3328,21 @@ export async function GET(request: Request) {
       }
 
       const content = extractContent(complaintResult.template, items, modularContent, visibilityContext);
+      const attachments = await getFilteredAttachmentsForTemplate(
+        content.raw as KontentItem,
+        items,
+        modularContent,
+        {
+          projectId,
+          managementApiKey,
+          taxonomyContext,
+        }
+      );
       return NextResponse.json(
         {
           ...content,
           brandPartner: resolvedBrandPartner,
+          attachments,
         },
         { status: 200 }
       );
